@@ -85,55 +85,102 @@ final class Marks {
     }
 
     static final class Stamp extends Item {
-        static final int SIG = 0, TEXT = 1;
+        static final int SIG = 0, TEXT = 1, TICK = 2;
         int kind;
         String text = "";
         int color = 0xFFE53935;
         boolean boxed = true;
+        /** 0 sans, 1 serif, 2 typewriter, 3 handwriting. */
+        int font;
+        /** 0 none, 1 green check, 2 red check, 3 red cross. On TEXT it sits beside the text. */
+        int tick;
         final RectF rect = new RectF();
     }
 
-    /** Draws a text stamp in its own units; the caller scales it to the stamp's box. */
+    /** Draws a text or tick stamp in its own units; the caller scales it to the stamp's box. */
     static final class StampArt {
-        private static final float TS = 100f, LH = 118f, BW = 8f;
+        private static final float TS = 100f, LH = 118f, BW = 8f, TICKW = 104f, GAP = 26f;
+        static final int GREEN = 0xFF2E9E3F, RED = 0xFFE53935;
+        private static final Typeface[] FACES = {
+                Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD),
+                Typeface.create(Typeface.SERIF, Typeface.BOLD),
+                Typeface.create(Typeface.MONOSPACE, Typeface.BOLD),
+                Typeface.create("cursive", Typeface.NORMAL)};
         private static final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.SUBPIXEL_TEXT_FLAG);
         private static final Paint line = new Paint(Paint.ANTI_ALIAS_FLAG);
 
         static {
-            text.setTypeface(Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD));
             text.setTextSize(TS);
             text.setTextAlign(Paint.Align.CENTER);
             line.setStyle(Paint.Style.STROKE);
-            line.setStrokeWidth(BW);
+            line.setStrokeCap(Paint.Cap.ROUND);
+            line.setStrokeJoin(Paint.Join.ROUND);
         }
 
         private StampArt() {}
 
-        private static float pad(boolean boxed) {
-            return boxed ? 36f : 8f;
+        private static float pad(Stamp s) {
+            return s.boxed ? 36f : 8f;
+        }
+
+        static Typeface face(int font) {
+            return FACES[Math.max(0, Math.min(FACES.length - 1, font))];
         }
 
         /** Natural width and height of a stamp. */
-        static float[] natural(String s, boolean boxed) {
-            String[] lines = s.split("\n", -1);
-            float w = 40f;
-            for (String l : lines) w = Math.max(w, text.measureText(l));
-            float pad = pad(boxed);
-            return new float[]{w + 2 * pad + (boxed ? 20f : 0f), 2 * pad + (lines.length - 1) * LH + TS};
+        static float[] natural(Stamp s) {
+            if (s.kind == Stamp.TICK) return new float[]{120f, 120f};
+            text.setTypeface(face(s.font));
+            String[] lines = s.text.split("\n", -1);
+            float tw = 40f;
+            for (String l : lines) tw = Math.max(tw, text.measureText(l));
+            float pad = pad(s);
+            float w = tw + 2 * pad + (s.boxed ? 20f : 0f) + (s.tick != 0 ? GAP + TICKW : 0f);
+            float h = 2 * pad + (lines.length - 1) * LH + TS;
+            if (s.tick != 0) h = Math.max(h, 2 * pad + TICKW);
+            return new float[]{w, h};
         }
 
-        static void draw(Canvas c, String s, int color, boolean boxed) {
-            String[] lines = s.split("\n", -1);
-            float[] nat = natural(s, boxed);
-            float pad = pad(boxed);
-            text.setColor(color);
-            for (int i = 0; i < lines.length; i++) {
-                c.drawText(lines[i], nat[0] / 2f, pad + TS * 0.84f + i * LH, text);
+        static void draw(Canvas c, Stamp s) {
+            if (s.kind == Stamp.TICK) {
+                tick(c, s.tick, 10f, 10f, 100f);
+                return;
             }
-            if (boxed) {
-                line.setColor(color);
+            float[] nat = natural(s); // also sets the typeface
+            float pad = pad(s);
+            String[] lines = s.text.split("\n", -1);
+            float tickPart = s.tick != 0 ? GAP + TICKW : 0f;
+            float textH = (lines.length - 1) * LH + TS;
+            float top = (nat[1] - textH) / 2f;
+            text.setColor(s.color);
+            for (int i = 0; i < lines.length; i++) {
+                c.drawText(lines[i], (nat[0] - tickPart) / 2f, top + TS * 0.84f + i * LH, text);
+            }
+            if (s.tick != 0) {
+                tick(c, s.tick, nat[0] - pad - TICKW, (nat[1] - TICKW) / 2f, TICKW);
+            }
+            if (s.boxed) {
+                line.setColor(s.color);
+                line.setStrokeWidth(BW);
                 c.drawRoundRect(BW / 2f, BW / 2f, nat[0] - BW / 2f, nat[1] - BW / 2f, 20f, 20f, line);
             }
+        }
+
+        private static void tick(Canvas c, int code, float x, float y, float size) {
+            line.setColor(code == 1 ? GREEN : RED);
+            line.setStrokeWidth(size * 0.15f);
+            Path p = new Path();
+            if (code == 3) {
+                p.moveTo(x + size * 0.16f, y + size * 0.16f);
+                p.lineTo(x + size * 0.84f, y + size * 0.84f);
+                p.moveTo(x + size * 0.84f, y + size * 0.16f);
+                p.lineTo(x + size * 0.16f, y + size * 0.84f);
+            } else {
+                p.moveTo(x + size * 0.10f, y + size * 0.56f);
+                p.lineTo(x + size * 0.38f, y + size * 0.84f);
+                p.lineTo(x + size * 0.90f, y + size * 0.18f);
+            }
+            c.drawPath(p, line);
         }
     }
 
@@ -261,10 +308,12 @@ final class Marks {
                     o.put("p", p);
                 } else {
                     Stamp s = (Stamp) it;
-                    o.put("k", s.kind == Stamp.SIG ? "sig" : "text");
+                    o.put("k", s.kind == Stamp.SIG ? "sig" : s.kind == Stamp.TICK ? "tick" : "text");
                     o.put("t", s.text);
                     o.put("c", s.color);
                     o.put("b", s.boxed);
+                    o.put("f", s.font);
+                    o.put("tk", s.tick);
                     o.put("l", s.rect.left);
                     o.put("tp", s.rect.top);
                     o.put("r", s.rect.right);
@@ -302,10 +351,12 @@ final class Marks {
                     if (s.n >= 2) l.add(s);
                 } else {
                     Stamp s = new Stamp();
-                    s.kind = k.equals("sig") ? Stamp.SIG : Stamp.TEXT;
+                    s.kind = k.equals("sig") ? Stamp.SIG : k.equals("tick") ? Stamp.TICK : Stamp.TEXT;
                     s.text = o.optString("t", "");
                     s.color = o.optInt("c", 0xFFE53935);
                     s.boxed = o.optBoolean("b", true);
+                    s.font = o.optInt("f", 0);
+                    s.tick = o.optInt("tk", 0);
                     s.rect.set((float) o.getDouble("l"), (float) o.getDouble("tp"),
                             (float) o.getDouble("r"), (float) o.getDouble("bt"));
                     l.add(s);

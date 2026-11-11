@@ -135,13 +135,13 @@ final class Exporter {
     }
 
     private static Bitmap stampBitmap(Marks.Stamp st) {
-        float[] nat = Marks.StampArt.natural(st.text, st.boxed);
+        float[] nat = Marks.StampArt.natural(st);
         float k = Math.min(4f, 1800f / Math.max(nat[0], nat[1]));
         int w = Math.max(1, (int) Math.ceil(nat[0] * k)), h = Math.max(1, (int) Math.ceil(nat[1] * k));
         Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(b);
         c.scale(k, k);
-        Marks.StampArt.draw(c, st.text, st.color, st.boxed);
+        Marks.StampArt.draw(c, st);
         return b;
     }
 

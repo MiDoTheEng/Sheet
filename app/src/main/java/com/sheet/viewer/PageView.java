@@ -400,11 +400,11 @@ final class PageView extends View {
                 Bitmap b = Sig.get(getContext());
                 if (b != null) c.drawBitmap(b, null, st.rect, bmpPaint);
             } else {
-                float[] nat = Marks.StampArt.natural(st.text, st.boxed);
+                float[] nat = Marks.StampArt.natural(st);
                 c.save();
                 c.translate(st.rect.left, st.rect.top);
                 c.scale(st.rect.width() / nat[0], st.rect.height() / nat[1]);
-                Marks.StampArt.draw(c, st.text, st.color, st.boxed);
+                Marks.StampArt.draw(c, st);
                 c.restore();
             }
         }

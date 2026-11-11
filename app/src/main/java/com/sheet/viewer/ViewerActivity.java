@@ -143,6 +143,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
             else setTool(PageView.HI);
         });
         bEraser = tool(bar, ToolButton.ERASER, "Eraser", v -> setTool(PageView.ERASER));
+        tool(bar, ToolButton.TEXT, "Text", v -> textDialog());
         bSign = tool(bar, ToolButton.SIGN, "Sign", v -> sign());
         bSign.setOnLongClickListener(v -> {
             sigMenu();
@@ -150,6 +151,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         });
         bDate = tool(bar, ToolButton.DATE, "Date", v -> placeDate());
         bStamp = tool(bar, ToolButton.STAMP, "Stamp", v -> stampMenu());
+        tool(bar, ToolButton.TICK, "Tick", v -> tickMenu());
         bUndo = tool(bar, ToolButton.UNDO, "Undo", v -> {
             int p = marks.undo();
             if (p == pageIndex) page.refresh();
@@ -427,14 +429,116 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         s.text = today();
         s.color = Store.stampColor(this);
         s.boxed = true;
-        placeText(s);
+        placeText(s, 0.42f);
     }
 
-    private void placeText(Marks.Stamp s) {
-        float[] nat = Marks.StampArt.natural(s.text, s.boxed);
-        page.place(s, nat[0] / nat[1], 0.42f, 0.3f);
+    private void placeText(Marks.Stamp s, float fracW) {
+        float[] nat = Marks.StampArt.natural(s);
+        page.place(s, nat[0] / nat[1], fracW, 0.35f);
         setTool(PageView.HAND);
         bHand.setOn(true);
+    }
+
+    // ---- ticks ----
+
+    private void tickMenu() {
+        new AlertDialog.Builder(this).setTitle("Place a mark")
+                .setItems(new String[]{"✓  Green tick", "✓  Red tick", "✕  Red cross"},
+                        (d, w) -> {
+                            Marks.Stamp s = new Marks.Stamp();
+                            s.kind = Marks.Stamp.TICK;
+                            s.tick = w + 1;
+                            page.place(s, 1f, 0.1f, 0.12f);
+                            setTool(PageView.HAND);
+                            bHand.setOn(true);
+                        })
+                .show();
+    }
+
+    // ---- comments (free text) ----
+
+    private interface IntPick {
+        void pick(int v);
+    }
+
+    /** A row of choice chips; the chosen one is highlighted. */
+    private LinearLayout chipRow(final String[] names, int selected, final IntPick cb) {
+        final LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        for (int i = 0; i < names.length; i++) {
+            final int idx = i;
+            TextView t = Ui.label(this, names[i], 13, i == selected ? Ui.ACCENT : Ui.TEXT);
+            t.setGravity(Gravity.CENTER);
+            t.setPadding(Ui.dp(this, 10), Ui.dp(this, 8), Ui.dp(this, 10), Ui.dp(this, 8));
+            if (i == selected) t.setBackground(Ui.round(0x33FFB020, Ui.dp(this, 10)));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.rightMargin = Ui.dp(this, 6);
+            row.addView(t, lp);
+            t.setOnClickListener(v -> {
+                cb.pick(idx);
+                for (int j = 0; j < row.getChildCount(); j++) {
+                    TextView ch = (TextView) row.getChildAt(j);
+                    boolean sel = ch == v;
+                    ch.setBackground(sel ? Ui.round(0x33FFB020, Ui.dp(this, 10)) : null);
+                    ch.setTextColor(sel ? Ui.ACCENT : Ui.TEXT);
+                }
+            });
+        }
+        return row;
+    }
+
+    private TextView dialogCaption(String s) {
+        TextView t = Ui.label(this, s, 12, Ui.DIM);
+        t.setPadding(0, Ui.dp(this, 14), 0, Ui.dp(this, 4));
+        return t;
+    }
+
+    private void textDialog() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int p = Ui.dp(this, 20);
+        box.setPadding(p, Ui.dp(this, 8), p, 0);
+
+        final EditText text = new EditText(this);
+        text.setHint("Write your comment…");
+        text.setMinLines(1);
+        text.setMaxLines(6);
+        box.addView(text);
+
+        final int[] font = {0};
+        box.addView(dialogCaption("Font"));
+        box.addView(chipRow(new String[]{"Simple", "Serif", "Typewriter", "Handwriting"}, 0,
+                v -> font[0] = v));
+
+        final int[] size = {1};
+        box.addView(dialogCaption("Starting size (drag the corner later for any size)"));
+        box.addView(chipRow(new String[]{"Small", "Medium", "Large"}, 1, v -> size[0] = v));
+
+        box.addView(dialogCaption("Color"));
+        final int[] color = {Store.stampColor(this)};
+        box.addView(colorRow(color[0], c -> color[0] = c, false));
+
+        final CheckBox boxed = new CheckBox(this);
+        boxed.setText("Draw a frame around it");
+        boxed.setPadding(0, Ui.dp(this, 8), 0, 0);
+        box.addView(boxed);
+
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        sv.addView(box);
+        new AlertDialog.Builder(this).setTitle("Comment").setView(sv)
+                .setPositiveButton("Place", (d, w) -> {
+                    String t = text.getText().toString().trim();
+                    if (t.isEmpty()) return;
+                    Marks.Stamp s = new Marks.Stamp();
+                    s.kind = Marks.Stamp.TEXT;
+                    s.text = t;
+                    s.color = color[0];
+                    s.font = font[0];
+                    s.boxed = boxed.isChecked();
+                    placeText(s, size[0] == 0 ? 0.22f : size[0] == 1 ? 0.4f : 0.6f);
+                })
+                .setNegativeButton("Cancel", null).show();
     }
 
     private void stampMenu() {
@@ -443,7 +547,8 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         names[0] = "+  New stamp…";
         for (int i = 0; i < saved.size(); i++) {
             Store.SavedStamp st = saved.get(i);
-            names[i + 1] = st.text.replace('\n', ' ') + (st.date ? "  (+ date)" : "");
+            names[i + 1] = st.text.replace('\n', ' ') + (st.date ? "  (+ date)" : "")
+                    + (st.tick == 1 ? "  ✓" : st.tick == 2 ? "  ✓" : st.tick == 3 ? "  ✕" : "");
         }
         AlertDialog.Builder b = new AlertDialog.Builder(this).setTitle("Stamps")
                 .setItems(names, (d, w) -> {
@@ -457,7 +562,8 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
                     s.text = st.date ? st.text + "\n" + today() : st.text;
                     s.color = st.color;
                     s.boxed = st.boxed;
-                    placeText(s);
+                    s.tick = st.tick;
+                    placeText(s, 0.42f);
                 });
         if (!saved.isEmpty()) {
             b.setNeutralButton("Edit list", (d, w) -> editStamps(saved));
@@ -494,6 +600,11 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         colors.setPadding(0, Ui.dp(this, 12), 0, 0);
         box.addView(colors);
 
+        final int[] tick = {0};
+        box.addView(dialogCaption("Mark beside the text"));
+        box.addView(chipRow(new String[]{"None", "✓ Green", "✓ Red", "✕ Red"}, 0,
+                v -> tick[0] = v));
+
         final CheckBox boxed = new CheckBox(this);
         boxed.setText("Draw a frame around it");
         boxed.setChecked(true);
@@ -506,7 +617,9 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         keep.setChecked(true);
         box.addView(keep);
 
-        new AlertDialog.Builder(this).setTitle("New stamp").setView(box)
+        android.widget.ScrollView scroll = new android.widget.ScrollView(this);
+        scroll.addView(box);
+        new AlertDialog.Builder(this).setTitle("New stamp").setView(scroll)
                 .setPositiveButton("Place", (d, w) -> {
                     String t = text.getText().toString().trim();
                     if (t.isEmpty()) return;
@@ -518,6 +631,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
                         st.color = color[0];
                         st.boxed = boxed.isChecked();
                         st.date = withDate.isChecked();
+                        st.tick = tick[0];
                         saved.add(0, st);
                         Store.saveStamps(this, saved);
                     }
@@ -526,7 +640,8 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
                     s.text = withDate.isChecked() ? t + "\n" + today() : t;
                     s.color = color[0];
                     s.boxed = boxed.isChecked();
-                    placeText(s);
+                    s.tick = tick[0];
+                    placeText(s, 0.42f);
                 })
                 .setNegativeButton("Cancel", null).show();
     }

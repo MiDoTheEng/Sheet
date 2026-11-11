@@ -66,6 +66,7 @@ final class Store {
         int color;
         boolean boxed;
         boolean date;
+        int tick; // 0 none, 1 green check, 2 red check, 3 red cross
     }
 
     static ArrayList<SavedStamp> stamps(Context c) {
@@ -79,6 +80,7 @@ final class Store {
                 s.color = o.getInt("c");
                 s.boxed = o.optBoolean("b", true);
                 s.date = o.optBoolean("d", false);
+                s.tick = o.optInt("tk", 0);
                 out.add(s);
             }
         } catch (Exception ignored) {
@@ -95,6 +97,7 @@ final class Store {
                 o.put("c", s.color);
                 o.put("b", s.boxed);
                 o.put("d", s.date);
+                o.put("tk", s.tick);
                 a.put(o);
             }
         } catch (Exception ignored) {
