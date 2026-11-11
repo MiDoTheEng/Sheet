@@ -1,0 +1,38 @@
+name: Build Sheet APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unpack the project zip, if it was uploaded as a zip
+        run: |
+          shopt -s nullglob
+          for z in *.zip; do unzip -o -q "$z"; done
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build the APK
+        run: |
+          settings=$(find . -name settings.gradle -not -path './.git/*' | head -n 1)
+          cd "$(dirname "$settings")"
+          gradle assembleDebug --no-daemon --stacktrace
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/out/Sheet.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Sheet-APK
+          path: out/Sheet.apk

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="sheet_bg">#15161A</color>
+    <color name="sheet_accent">#FFB020</color>
+    <color name="icon_bg">#1B2A41</color>
+
+    <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
+        <item name="android:colorPrimary">@color/sheet_bg</item>
+        <item name="android:colorPrimaryDark">@color/sheet_bg</item>
+        <item name="android:colorAccent">@color/sheet_accent</item>
+        <item name="android:windowBackground">@color/sheet_bg</item>
+        <item name="android:statusBarColor">@color/sheet_bg</item>
+        <item name="android:navigationBarColor">@color/sheet_bg</item>
+    </style>
+</resources>

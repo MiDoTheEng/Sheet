@@ -1,0 +1,59 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.sheet.viewer'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.sheet.viewer'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+
+    // A fixed key kept in the project, so every new build installs over the previous one
+    // and the signature, stamps and unsaved marks are kept.
+    signingConfigs {
+        sheet {
+            storeFile file('sheet.keystore')
+            storePassword 'sheetapp'
+            keyAlias 'sheet'
+            keyPassword 'sheetapp'
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.sheet
+        }
+        release {
+            signingConfig signingConfigs.sheet
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    packaging {
+        resources {
+            excludes += ['META-INF/versions/**', 'META-INF/DEPENDENCIES', 'META-INF/LICENSE*',
+                         'META-INF/NOTICE*', 'META-INF/*.md', 'META-INF/*.kotlin_module']
+        }
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+dependencies {
+    // Writes the doodles, signature and stamps into the PDF file when saving.
+    implementation 'com.tom-roush:pdfbox-android:2.0.27.0'
+}
