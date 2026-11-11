@@ -46,6 +46,8 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
     private TextView pageLabel, saveBtn;
     private ToolButton bHand, bPen, bHi, bEraser, bSign, bDate, bStamp, bUndo, bRedo;
     private FrameLayout busy;
+    private int barPos;
+    private boolean barVertical;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -118,20 +120,54 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         busy.setVisibility(View.GONE);
         mid.addView(busy, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        root.addView(mid, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        // --- toolbar ---
-        HorizontalScrollView hs = new HorizontalScrollView(this);
-        hs.setBackgroundColor(Ui.BAR);
-        hs.setHorizontalScrollBarEnabled(false);
+        // --- toolbar; its place (bottom / top / left / right) is the user's choice ---
+        barPos = Store.barPos(this);
+        barVertical = barPos >= 2;
         LinearLayout bar = new LinearLayout(this);
-        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setOrientation(barVertical ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
         bar.setGravity(Gravity.CENTER);
-        bar.setMinimumWidth(getResources().getDisplayMetrics().widthPixels);
-        hs.addView(bar);
-        root.addView(hs, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 64)));
+        View barWrap;
+        if (barVertical) {
+            android.widget.ScrollView sv = new android.widget.ScrollView(this);
+            sv.setBackgroundColor(Ui.BAR);
+            sv.setVerticalScrollBarEnabled(false);
+            sv.setFillViewport(true);
+            sv.addView(bar, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            barWrap = sv;
+        } else {
+            HorizontalScrollView hs = new HorizontalScrollView(this);
+            hs.setBackgroundColor(Ui.BAR);
+            hs.setHorizontalScrollBarEnabled(false);
+            hs.setFillViewport(true);
+            hs.addView(bar, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            barWrap = hs;
+        }
+
+        LinearLayout midRow = new LinearLayout(this);
+        midRow.setOrientation(LinearLayout.HORIZONTAL);
+        if (barPos == 2) {
+            midRow.addView(barWrap, new LinearLayout.LayoutParams(Ui.dp(this, 68),
+                    ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+        midRow.addView(mid, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        if (barPos == 3) {
+            midRow.addView(barWrap, new LinearLayout.LayoutParams(Ui.dp(this, 68),
+                    ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+        if (barPos == 1) {
+            root.addView(barWrap, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 64)));
+        }
+        root.addView(midRow, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        if (barPos == 0) {
+            root.addView(barWrap, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 64)));
+        }
 
         bHand = tool(bar, ToolButton.PAN, "Move", v -> setTool(PageView.HAND));
         bPen = tool(bar, ToolButton.PEN, "Pen", v -> {
@@ -164,6 +200,10 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
             else if (p >= 0) go(p);
             marksChangedUi();
         });
+        tool(bar, ToolButton.BARPOS, "Bar", v -> {
+            Store.setBarPos(this, (barPos + 1) % 4);
+            recreate();
+        });
 
         setContentView(root);
         setTool(PageView.HAND);
@@ -183,8 +223,9 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
     private ToolButton tool(LinearLayout bar, int kind, String label, View.OnClickListener l) {
         ToolButton t = new ToolButton(this, kind, label);
         t.setOnClickListener(l);
-        bar.addView(t, new LinearLayout.LayoutParams(Ui.dp(this, 62),
-                ViewGroup.LayoutParams.MATCH_PARENT));
+        bar.addView(t, barVertical
+                ? new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 60))
+                : new LinearLayout.LayoutParams(Ui.dp(this, 62), ViewGroup.LayoutParams.MATCH_PARENT));
         return t;
     }
 
@@ -340,28 +381,30 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         void pick(int c);
     }
 
+    /** Color dots that share the row's width evenly, so they always fit the dialog. */
     private LinearLayout colorRow(int current, final ColorPick cb, boolean hi) {
-        LinearLayout row = new LinearLayout(this);
+        final LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER);
-        int[] colors = hi ? new int[]{0xFFFFEB3B, 0xFF69F0AE, 0xFF40C4FF, 0xFFFF8A80}
+        final int[] colors = hi ? new int[]{0xFFFFEB3B, 0xFF69F0AE, 0xFF40C4FF, 0xFFFF8A80}
                 : COLORS;
-        int size = Ui.dp(this, 36), m = Ui.dp(this, 6);
-        for (final int c : colors) {
+        int size = Ui.dp(this, 30);
+        for (int i = 0; i < colors.length; i++) {
+            final int c = colors[i];
+            final int idx = i;
+            FrameLayout cell = new FrameLayout(this);
             View v = new View(this);
             v.setBackground(Ui.dot(c, c == current ? Ui.dp(this, 3) : Ui.dp(this, 1),
                     c == current ? Ui.ACCENT : 0x33000000));
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(size, size);
-            lp.setMargins(m, 0, m, 0);
-            row.addView(v, lp);
-            final LinearLayout frow = row;
-            v.setOnClickListener(x -> {
+            FrameLayout.LayoutParams dlp = new FrameLayout.LayoutParams(size, size);
+            dlp.gravity = Gravity.CENTER;
+            cell.addView(v, dlp);
+            row.addView(cell, new LinearLayout.LayoutParams(0, Ui.dp(this, 46), 1f));
+            cell.setOnClickListener(x -> {
                 cb.pick(c);
-                for (int i = 0; i < frow.getChildCount(); i++) {
-                    View ch = frow.getChildAt(i);
-                    boolean sel = ch == x;
-                    int cc = hi ? colors[i] : COLORS[i];
-                    ch.setBackground(Ui.dot(cc, sel ? Ui.dp(this, 3) : Ui.dp(this, 1),
+                for (int j = 0; j < row.getChildCount(); j++) {
+                    View ch = ((FrameLayout) row.getChildAt(j)).getChildAt(0);
+                    boolean sel = j == idx;
+                    ch.setBackground(Ui.dot(colors[j], sel ? Ui.dp(this, 3) : Ui.dp(this, 1),
                             sel ? Ui.ACCENT : 0x33000000));
                 }
             });
@@ -442,17 +485,39 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
     // ---- ticks ----
 
     private void tickMenu() {
-        new AlertDialog.Builder(this).setTitle("Place a mark")
-                .setItems(new String[]{"✓  Green tick", "✓  Red tick", "✕  Red cross"},
-                        (d, w) -> {
-                            Marks.Stamp s = new Marks.Stamp();
-                            s.kind = Marks.Stamp.TICK;
-                            s.tick = w + 1;
-                            page.place(s, 1f, 0.1f, 0.12f);
-                            setTool(PageView.HAND);
-                            bHand.setOn(true);
-                        })
-                .show();
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int p = Ui.dp(this, 20);
+        box.setPadding(p, Ui.dp(this, 8), p, 0);
+
+        final CheckBox sq = new CheckBox(this);
+        sq.setText("Inside a square");
+        sq.setChecked(Store.tickBoxed(this));
+        box.addView(sq);
+
+        final AlertDialog[] dlg = new AlertDialog[1];
+        String[] names = {"✓   Green tick", "✓   Red tick", "✕   Red cross"};
+        int[] colors = {Marks.StampArt.GREEN, Marks.StampArt.RED, Marks.StampArt.RED};
+        for (int i = 0; i < 3; i++) {
+            final int code = i + 1;
+            TextView row = Ui.label(this, names[i], 17, colors[i]);
+            row.setTypeface(Typeface.DEFAULT_BOLD);
+            row.setPadding(Ui.dp(this, 6), Ui.dp(this, 14), Ui.dp(this, 6), Ui.dp(this, 14));
+            box.addView(row);
+            row.setOnClickListener(v -> {
+                Store.setTickBoxed(this, sq.isChecked());
+                Marks.Stamp s = new Marks.Stamp();
+                s.kind = Marks.Stamp.TICK;
+                s.tick = code;
+                s.boxed = sq.isChecked();
+                page.place(s, 1f, 0.1f, 0.12f);
+                setTool(PageView.HAND);
+                bHand.setOn(true);
+                if (dlg[0] != null) dlg[0].dismiss();
+            });
+        }
+        dlg[0] = new AlertDialog.Builder(this).setTitle("Place a mark").setView(box)
+                .setNegativeButton("Cancel", null).show();
     }
 
     // ---- comments (free text) ----

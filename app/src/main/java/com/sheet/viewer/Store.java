@@ -115,6 +115,23 @@ final class Store {
         p(c).edit().putInt("page_" + key, page).apply();
     }
 
+    /** Where the toolbar sits: 0 bottom, 1 top, 2 left, 3 right. */
+    static int barPos(Context c) {
+        return p(c).getInt("barPos", 0);
+    }
+
+    static void setBarPos(Context c, int pos) {
+        p(c).edit().putInt("barPos", pos).apply();
+    }
+
+    static boolean tickBoxed(Context c) {
+        return p(c).getBoolean("tickBoxed", true);
+    }
+
+    static void setTickBoxed(Context c, boolean v) {
+        p(c).edit().putBoolean("tickBoxed", v).apply();
+    }
+
     static int stampColor(Context c) {
         return p(c).getInt("stampColor", 0xFFE53935);
     }

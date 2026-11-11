@@ -129,7 +129,9 @@ final class Marks {
 
         /** Natural width and height of a stamp. */
         static float[] natural(Stamp s) {
-            if (s.kind == Stamp.TICK) return new float[]{120f, 120f};
+            if (s.kind == Stamp.TICK) {
+                return s.boxed ? new float[]{150f, 150f} : new float[]{120f, 120f};
+            }
             text.setTypeface(face(s.font));
             String[] lines = s.text.split("\n", -1);
             float tw = 40f;
@@ -143,7 +145,14 @@ final class Marks {
 
         static void draw(Canvas c, Stamp s) {
             if (s.kind == Stamp.TICK) {
-                tick(c, s.tick, 10f, 10f, 100f);
+                if (s.boxed) {
+                    line.setColor(s.tick == 1 ? GREEN : RED);
+                    line.setStrokeWidth(10f);
+                    c.drawRect(5f, 5f, 145f, 145f, line);
+                    tick(c, s.tick, 31f, 31f, 88f);
+                } else {
+                    tick(c, s.tick, 10f, 10f, 100f);
+                }
                 return;
             }
             float[] nat = natural(s); // also sets the typeface
