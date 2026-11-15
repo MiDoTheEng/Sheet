@@ -38,14 +38,21 @@ final class Sig {
         loaded = true;
     }
 
-    /**
-     * Takes a picture of a signature, makes the paper around it see-through, trims the empty
-     * edges and keeps it. Returns false if the picture could not be read.
-     */
-    static synchronized boolean importFrom(Context c, Uri uri) {
+    /** Reads the picked picture, or null if it could not be read. */
+    static Bitmap decodeRaw(Context c, Uri uri) {
         try {
-            Bitmap src = decode(c, uri);
-            if (src == null) return false;
+            return decode(c, uri);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
+     * Takes the (already cropped) picture of a signature, makes the paper around it
+     * see-through, trims the empty edges and keeps it.
+     */
+    static synchronized boolean saveBitmap(Context c, Bitmap src) {
+        try {
             Bitmap out = clean(src);
             try (FileOutputStream fo = new FileOutputStream(file(c))) {
                 out.compress(Bitmap.CompressFormat.PNG, 100, fo);

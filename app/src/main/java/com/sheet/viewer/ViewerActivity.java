@@ -31,7 +31,7 @@ import java.util.Locale;
 
 /** The viewer: one page at a time, pan/zoom, doodle, signature and stamps, then save. */
 public final class ViewerActivity extends Activity implements Renderer.Host, PageView.Host {
-    private static final int REQ_SAVE_COPY = 2, REQ_SIG = 3;
+    private static final int REQ_SAVE_COPY = 2, REQ_SIG = 3, REQ_CROP = 4;
     private static final int[] COLORS = {0xFFE53935, 0xFF1E88E5, 0xFF43A047, 0xFF000000,
             0xFFFB8C00, 0xFF8E24AA};
 
@@ -305,6 +305,53 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
     @Override
     public void onMarksChanged() {
         marksChangedUi();
+    }
+
+    @Override
+    public void onEditStamp(final Marks.Stamp s) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int p = Ui.dp(this, 20);
+        box.setPadding(p, Ui.dp(this, 8), p, 0);
+
+        final EditText text = new EditText(this);
+        text.setText(s.text);
+        text.setMinLines(1);
+        text.setMaxLines(6);
+        box.addView(text);
+
+        final int[] font = {s.font};
+        box.addView(dialogCaption("Font"));
+        box.addView(chipRow(new String[]{"Simple", "Serif", "Typewriter", "Handwriting"}, s.font,
+                v -> font[0] = v));
+
+        box.addView(dialogCaption("Color"));
+        final int[] color = {s.color};
+        box.addView(colorRow(s.color, c -> color[0] = c, false));
+
+        final int[] tick = {s.tick};
+        box.addView(dialogCaption("Mark beside the text"));
+        box.addView(chipRow(new String[]{"None", "✓ Green", "✓ Red", "✕ Red"}, s.tick,
+                v -> tick[0] = v));
+
+        final CheckBox boxed = new CheckBox(this);
+        boxed.setText("Draw a frame around it");
+        boxed.setChecked(s.boxed);
+        box.addView(boxed);
+
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        sv.addView(box);
+        new AlertDialog.Builder(this).setTitle("Edit").setView(sv)
+                .setPositiveButton("Done", (d, w) -> {
+                    String t = text.getText().toString().trim();
+                    if (!t.isEmpty()) s.text = t;
+                    s.font = font[0];
+                    s.color = color[0];
+                    s.tick = tick[0];
+                    s.boxed = boxed.isChecked();
+                    page.stampReshaped(s);
+                })
+                .setNegativeButton("Cancel", null).show();
     }
 
     private void go(int index) {
@@ -797,26 +844,28 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
+        if (req == REQ_CROP) {
+            if (res == RESULT_OK) {
+                if (pendingSig) {
+                    pendingSig = false;
+                    placeSig();
+                } else {
+                    Ui.toast(this, "Signature saved");
+                }
+            } else {
+                pendingSig = false;
+            }
+            return;
+        }
         if (res != RESULT_OK || data == null || data.getData() == null) return;
         if (req == REQ_SAVE_COPY) {
             doSave(data.getData());
         } else if (req == REQ_SIG) {
-            final Uri img = data.getData();
-            busy.setVisibility(View.VISIBLE);
-            new Thread(() -> {
-                final boolean ok = Sig.importFrom(this, img);
-                runOnUiThread(() -> {
-                    busy.setVisibility(View.GONE);
-                    if (!ok) {
-                        Ui.toast(this, "That image could not be read");
-                    } else if (pendingSig) {
-                        pendingSig = false;
-                        placeSig();
-                    } else {
-                        Ui.toast(this, "Signature saved");
-                    }
-                });
-            }, "sheet-sig").start();
+            // Let the user crop out just the signature before it is cleaned and saved.
+            Intent ci = new Intent(this, CropActivity.class);
+            ci.setData(data.getData());
+            ci.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivityForResult(ci, REQ_CROP);
         }
     }
 

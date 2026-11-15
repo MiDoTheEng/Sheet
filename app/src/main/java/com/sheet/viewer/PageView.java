@@ -33,6 +33,9 @@ final class PageView extends View {
         void onPageFling(int dir);
 
         void onMarksChanged();
+
+        /** The user double-tapped a text stamp: open it for editing. */
+        void onEditStamp(Marks.Stamp s);
     }
 
     /** What the render thread needs to know about the view. */
@@ -147,6 +150,13 @@ final class PageView extends View {
 
             @Override
             public boolean onDoubleTap(MotionEvent e) {
+                Marks.Stamp hit = stampAt(e.getX(), e.getY());
+                if (hit != null && hit.kind == Marks.Stamp.TEXT) {
+                    selected = hit;
+                    invalidate();
+                    if (host != null) host.onEditStamp(hit);
+                    return true;
+                }
                 float target = scale < fitScale * 1.5f ? fitScale * 3.5f : fitScale;
                 animateZoom(target, e.getX(), e.getY());
                 return true;
@@ -468,6 +478,18 @@ final class PageView extends View {
             selected = null;
             invalidate();
         }
+    }
+
+    /** A stamp's text or look changed: keep its height, fit its width to the new shape. */
+    void stampReshaped(Marks.Stamp s) {
+        float[] nat = Marks.StampArt.natural(s);
+        float h = s.rect.height();
+        float w = h * nat[0] / nat[1];
+        s.rect.right = s.rect.left + w;
+        if (s.rect.right > pageW) s.rect.offset(pageW - s.rect.right, 0);
+        if (s.rect.left < 0) s.rect.offset(-s.rect.left, 0);
+        invalidate();
+        if (host != null) host.onMarksChanged();
     }
 
     /** Call after undo/redo or any change made from outside. */
