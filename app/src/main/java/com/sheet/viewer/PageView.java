@@ -151,7 +151,8 @@ final class PageView extends View {
             @Override
             public boolean onDoubleTap(MotionEvent e) {
                 Marks.Stamp hit = stampAt(e.getX(), e.getY());
-                if (hit != null && hit.kind == Marks.Stamp.TEXT) {
+                if (hit != null && (hit.kind == Marks.Stamp.TEXT || hit.kind == Marks.Stamp.RECT
+                        || hit.kind == Marks.Stamp.OVAL)) {
                     selected = hit;
                     invalidate();
                     if (host != null) host.onEditStamp(hit);
@@ -409,6 +410,19 @@ final class PageView extends View {
             if (st.kind == Marks.Stamp.SIG) {
                 Bitmap b = Sig.get(getContext());
                 if (b != null) c.drawBitmap(b, null, st.rect, bmpPaint);
+            } else if (st.kind == Marks.Stamp.RECT || st.kind == Marks.Stamp.OVAL) {
+                ink.setXfermode(null);
+                ink.setColor(st.color);
+                float sw = Math.max(1.2f, Math.min(st.rect.width(), st.rect.height()) * 0.05f);
+                ink.setStrokeWidth(sw);
+                float in = sw / 2f;
+                if (st.kind == Marks.Stamp.RECT) {
+                    c.drawRect(st.rect.left + in, st.rect.top + in,
+                            st.rect.right - in, st.rect.bottom - in, ink);
+                } else {
+                    c.drawOval(st.rect.left + in, st.rect.top + in,
+                            st.rect.right - in, st.rect.bottom - in, ink);
+                }
             } else {
                 float[] nat = Marks.StampArt.natural(st);
                 c.save();

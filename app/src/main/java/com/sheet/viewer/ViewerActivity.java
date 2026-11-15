@@ -188,6 +188,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         bDate = tool(bar, ToolButton.DATE, "Date", v -> placeDate());
         bStamp = tool(bar, ToolButton.STAMP, "Stamp", v -> stampMenu());
         tool(bar, ToolButton.TICK, "Tick", v -> tickMenu());
+        tool(bar, ToolButton.SHAPES, "Shape", v -> shapeMenu());
         bUndo = tool(bar, ToolButton.UNDO, "Undo", v -> {
             int p = marks.undo();
             if (p == pageIndex) page.refresh();
@@ -309,6 +310,21 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
 
     @Override
     public void onEditStamp(final Marks.Stamp s) {
+        if (s.kind == Marks.Stamp.RECT || s.kind == Marks.Stamp.OVAL) {
+            LinearLayout box = new LinearLayout(this);
+            box.setOrientation(LinearLayout.VERTICAL);
+            int pp = Ui.dp(this, 20);
+            box.setPadding(pp, pp, pp, 0);
+            final int[] color = {s.color};
+            box.addView(colorRow(s.color, c -> color[0] = c, false));
+            new AlertDialog.Builder(this).setTitle("Shape color").setView(box)
+                    .setPositiveButton("Done", (d, w) -> {
+                        s.color = color[0];
+                        page.refresh();
+                    })
+                    .setNegativeButton("Cancel", null).show();
+            return;
+        }
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         int p = Ui.dp(this, 20);
@@ -565,6 +581,22 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         }
         dlg[0] = new AlertDialog.Builder(this).setTitle("Place a mark").setView(box)
                 .setNegativeButton("Cancel", null).show();
+    }
+
+    // ---- shapes ----
+
+    private void shapeMenu() {
+        new AlertDialog.Builder(this).setTitle("Place a shape (uses the pen color)")
+                .setItems(new String[]{"Rectangle", "Square", "Oval", "Circle"}, (d, w) -> {
+                    Marks.Stamp s = new Marks.Stamp();
+                    s.kind = (w <= 1) ? Marks.Stamp.RECT : Marks.Stamp.OVAL;
+                    s.color = page.penColor;
+                    boolean even = (w == 1 || w == 3);
+                    page.place(s, even ? 1f : 1.6f, even ? 0.18f : 0.3f, 0.35f);
+                    setTool(PageView.HAND);
+                    bHand.setOn(true);
+                })
+                .show();
     }
 
     // ---- comments (free text) ----

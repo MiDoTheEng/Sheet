@@ -71,6 +71,9 @@ final class Exporter {
                     for (Marks.Item it : items) {
                         if (it instanceof Marks.Stroke) {
                             stroke(cs, (Marks.Stroke) it);
+                        } else if (((Marks.Stamp) it).kind == Marks.Stamp.RECT
+                                || ((Marks.Stamp) it).kind == Marks.Stamp.OVAL) {
+                            shape(cs, (Marks.Stamp) it);
                         } else {
                             Marks.Stamp st = (Marks.Stamp) it;
                             PDImageXObject img;
@@ -132,6 +135,32 @@ final class Exporter {
         }
         cs.stroke();
         cs.restoreGraphicsState();
+    }
+
+    /** Rectangles and ovals go into the PDF as real shapes, sharp at any zoom. */
+    private static void shape(PDPageContentStream cs, Marks.Stamp s) throws Exception {
+        float sw = Math.max(1.2f, Math.min(s.rect.width(), s.rect.height()) * 0.05f);
+        float in = sw / 2f;
+        float l = s.rect.left + in, t = s.rect.top + in;
+        float w = s.rect.width() - sw, h = s.rect.height() - sw;
+        if (w <= 0 || h <= 0) return;
+        cs.setStrokingColor(new PDColor(new float[]{
+                ((s.color >> 16) & 0xff) / 255f, ((s.color >> 8) & 0xff) / 255f,
+                (s.color & 0xff) / 255f}, PDDeviceRGB.INSTANCE));
+        cs.setLineWidth(sw);
+        if (s.kind == Marks.Stamp.RECT) {
+            cs.addRect(l, t, w, h);
+        } else {
+            float cx = l + w / 2f, cy = t + h / 2f, rx = w / 2f, ry = h / 2f;
+            final float k = 0.5522848f;
+            cs.moveTo(cx + rx, cy);
+            cs.curveTo(cx + rx, cy + ry * k, cx + rx * k, cy + ry, cx, cy + ry);
+            cs.curveTo(cx - rx * k, cy + ry, cx - rx, cy + ry * k, cx - rx, cy);
+            cs.curveTo(cx - rx, cy - ry * k, cx - rx * k, cy - ry, cx, cy - ry);
+            cs.curveTo(cx + rx * k, cy - ry, cx + rx, cy - ry * k, cx + rx, cy);
+            cs.closePath();
+        }
+        cs.stroke();
     }
 
     private static Bitmap stampBitmap(Marks.Stamp st) {

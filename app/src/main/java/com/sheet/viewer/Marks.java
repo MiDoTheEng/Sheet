@@ -85,7 +85,7 @@ final class Marks {
     }
 
     static final class Stamp extends Item {
-        static final int SIG = 0, TEXT = 1, TICK = 2;
+        static final int SIG = 0, TEXT = 1, TICK = 2, RECT = 3, OVAL = 4;
         int kind;
         String text = "";
         int color = 0xFFE53935;
@@ -317,7 +317,8 @@ final class Marks {
                     o.put("p", p);
                 } else {
                     Stamp s = (Stamp) it;
-                    o.put("k", s.kind == Stamp.SIG ? "sig" : s.kind == Stamp.TICK ? "tick" : "text");
+                    o.put("k", s.kind == Stamp.SIG ? "sig" : s.kind == Stamp.TICK ? "tick"
+                            : s.kind == Stamp.RECT ? "rect" : s.kind == Stamp.OVAL ? "oval" : "text");
                     o.put("t", s.text);
                     o.put("c", s.color);
                     o.put("b", s.boxed);
@@ -360,7 +361,8 @@ final class Marks {
                     if (s.n >= 2) l.add(s);
                 } else {
                     Stamp s = new Stamp();
-                    s.kind = k.equals("sig") ? Stamp.SIG : k.equals("tick") ? Stamp.TICK : Stamp.TEXT;
+                    s.kind = k.equals("sig") ? Stamp.SIG : k.equals("tick") ? Stamp.TICK
+                            : k.equals("rect") ? Stamp.RECT : k.equals("oval") ? Stamp.OVAL : Stamp.TEXT;
                     s.text = o.optString("t", "");
                     s.color = o.optInt("c", 0xFFE53935);
                     s.boxed = o.optBoolean("b", true);
