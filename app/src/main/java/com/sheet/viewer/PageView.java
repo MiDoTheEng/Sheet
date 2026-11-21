@@ -293,8 +293,11 @@ final class PageView extends View {
         if (fitScale <= 0) fitScale = 0.01f;
     }
 
+    /** How far past "whole page on screen" the user may zoom. CAD drawings allow much more. */
+    float maxZoom = 60f;
+
     private float maxScale() {
-        return Math.max(fitScale * 60f, 14f);
+        return Math.max(fitScale * maxZoom, 14f);
     }
 
     private void zoomBy(float f, float fx, float fy) {

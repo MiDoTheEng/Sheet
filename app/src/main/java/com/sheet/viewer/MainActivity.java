@@ -32,10 +32,10 @@ public final class MainActivity extends Activity {
         TextView title = Ui.label(this, "Sheet", 30, Ui.TEXT);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         root.addView(title);
-        TextView sub = Ui.label(this, "Drawings · markup · signature · stamps", 14, Ui.DIM);
+        TextView sub = Ui.label(this, "PDF & DXF drawings · markup · signature · stamps", 14, Ui.DIM);
         root.addView(sub);
 
-        TextView open = Ui.label(this, "Open PDF", 17, 0xFF15161A);
+        TextView open = Ui.label(this, "Open file", 17, 0xFF15161A);
         open.setTypeface(Typeface.DEFAULT_BOLD);
         open.setGravity(Gravity.CENTER);
         open.setBackground(Ui.round(Ui.ACCENT, Ui.dp(this, 14)));
@@ -101,7 +101,8 @@ public final class MainActivity extends Activity {
     private void pick() {
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         i.addCategory(Intent.CATEGORY_OPENABLE);
-        i.setType("application/pdf");
+        // DXF files are reported under many different types, so every file is offered.
+        i.setType("*/*");
         i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         try {

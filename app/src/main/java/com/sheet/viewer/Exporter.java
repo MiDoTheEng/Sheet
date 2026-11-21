@@ -11,6 +11,9 @@ import com.tom_roush.pdfbox.pdmodel.PDDocument;
 import com.tom_roush.pdfbox.pdmodel.PDPage;
 import com.tom_roush.pdfbox.pdmodel.PDPageContentStream;
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle;
+import com.tom_roush.pdfbox.pdmodel.font.PDFont;
+import com.tom_roush.pdfbox.pdmodel.font.PDType0Font;
+import com.tom_roush.pdfbox.pdmodel.font.PDType1Font;
 import com.tom_roush.pdfbox.pdmodel.graphics.blend.BlendMode;
 import com.tom_roush.pdfbox.pdmodel.graphics.color.PDColor;
 import com.tom_roush.pdfbox.pdmodel.graphics.color.PDDeviceRGB;
@@ -38,6 +41,42 @@ final class Exporter {
         File tmp = new File(ctx.getCacheDir(), "export.pdf");
         try (InputStream in = ctx.getContentResolver().openInputStream(src);
              PDDocument doc = PDDocument.load(in, MemoryUsageSetting.setupTempFileOnly())) {
+            applyMarks(ctx, doc, marks);
+            doc.save(tmp);
+        }
+        return tmp;
+    }
+
+    /**
+     * Turns a DXF drawing into a PDF (real vector lines, so it stays sharp and prints well)
+     * with the marks on top. Hidden layers stay hidden.
+     */
+    static File buildCad(Context ctx, DxfDoc d, Marks marks) throws Exception {
+        PDFBoxResourceLoader.init(ctx.getApplicationContext());
+        File tmp = new File(ctx.getCacheDir(), "export.pdf");
+        try (PDDocument doc = new PDDocument(MemoryUsageSetting.setupTempFileOnly())) {
+            PDPage page = new PDPage(new PDRectangle(d.pageW, d.pageH));
+            doc.addPage(page);
+            PDFont font = null;
+            try {
+                File f = new File("/system/fonts/Roboto-Regular.ttf");
+                if (f.exists()) font = PDType0Font.load(doc, f);
+            } catch (Throwable ignored) {
+            }
+            if (font == null) font = PDType1Font.HELVETICA;
+            try (PDPageContentStream cs = new PDPageContentStream(doc, page,
+                    PDPageContentStream.AppendMode.OVERWRITE, true)) {
+                cs.transform(new Matrix(1, 0, 0, -1, 0, d.pageH));
+                d.writePdf(cs, font);
+            }
+            applyMarks(ctx, doc, marks);
+            doc.save(tmp);
+        }
+        return tmp;
+    }
+
+    private static void applyMarks(Context ctx, PDDocument doc, Marks marks) throws Exception {
+        {
             PDImageXObject sig = null;
             for (int index : marks.usedPages()) {
                 if (index < 0 || index >= doc.getNumberOfPages()) continue;
@@ -99,9 +138,7 @@ final class Exporter {
                     cs.close();
                 }
             }
-            doc.save(tmp);
         }
-        return tmp;
     }
 
     private static void stroke(PDPageContentStream cs, Marks.Stroke s) throws Exception {

@@ -21,15 +21,17 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Draws the PDF on its own thread so the screen never waits for it.
+ * Draws the file on its own thread so the screen never waits for it.
  *
  * Each page gets a whole-page picture (shown instantly while zooming and panning) and, when
  * zoomed in, a sharp picture of just the part on screen, redrawn continuously as the view moves.
+ * The same engine serves PDF pages and DXF drawings.
  */
 final class Renderer implements Handler.Callback {
 
     interface Host {
-        void onDocOpened(int pages);
+        /** cad is the drawing when the file is a DXF, otherwise null. */
+        void onDocOpened(int pages, DxfDoc cad);
 
         void onDocFailed(String why);
 
@@ -41,8 +43,119 @@ final class Renderer implements Handler.Callback {
         void onPatch(int gen, Bitmap bmp, RectF rect, float scale);
     }
 
+    /** Something that has pages and can draw them. */
+    private interface Source {
+        int pageCount();
+
+        /** Opens a page and returns its width and height. */
+        float[] open(int index) throws Exception;
+
+        int current();
+
+        void render(Bitmap b, Matrix m);
+
+        void close();
+    }
+
+    private static final class PdfSource implements Source {
+        private ParcelFileDescriptor pfd;
+        private PdfRenderer renderer;
+        private PdfRenderer.Page page;
+
+        PdfSource(Context ctx, Uri uri) throws Exception {
+            try {
+                pfd = ctx.getContentResolver().openFileDescriptor(uri, "r");
+                if (pfd == null) throw new java.io.IOException("no file");
+                renderer = new PdfRenderer(pfd);
+            } catch (SecurityException se) {
+                close();
+                throw se;
+            } catch (Exception first) {
+                // Some places (cloud folders) give a file that can't be read in pieces:
+                // bring a copy into the app and read that.
+                close();
+                File copy = new File(ctx.getCacheDir(), "open.pdf");
+                try (InputStream in = ctx.getContentResolver().openInputStream(uri);
+                     FileOutputStream out = new FileOutputStream(copy)) {
+                    if (in == null) throw new java.io.IOException("no file");
+                    byte[] buf = new byte[1 << 16];
+                    int n;
+                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                }
+                pfd = ParcelFileDescriptor.open(copy, ParcelFileDescriptor.MODE_READ_ONLY);
+                renderer = new PdfRenderer(pfd);
+            }
+        }
+
+        public int pageCount() {
+            return renderer.getPageCount();
+        }
+
+        public float[] open(int index) {
+            if (page != null) page.close();
+            page = null;
+            page = renderer.openPage(index);
+            return new float[]{page.getWidth(), page.getHeight()};
+        }
+
+        public int current() {
+            return page == null ? -1 : page.getIndex();
+        }
+
+        public void render(Bitmap b, Matrix m) {
+            page.render(b, null, m, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
+        }
+
+        public void close() {
+            try {
+                if (page != null) page.close();
+            } catch (Throwable ignored) {
+            }
+            page = null;
+            try {
+                if (renderer != null) renderer.close();
+            } catch (Throwable ignored) {
+            }
+            renderer = null;
+            try {
+                if (pfd != null) pfd.close();
+            } catch (Throwable ignored) {
+            }
+            pfd = null;
+        }
+    }
+
+    private static final class CadSource implements Source {
+        final DxfDoc doc;
+        private int cur = -1;
+
+        CadSource(DxfDoc d) {
+            doc = d;
+        }
+
+        public int pageCount() {
+            return 1;
+        }
+
+        public float[] open(int index) {
+            cur = 0;
+            return new float[]{doc.pageW, doc.pageH};
+        }
+
+        public int current() {
+            return cur;
+        }
+
+        public void render(Bitmap b, Matrix m) {
+            doc.render(b, m);
+        }
+
+        public void close() {
+        }
+    }
+
     private static final int MSG_OPEN = 1, MSG_PAGE = 2, MSG_BASE = 3, MSG_PATCH = 4,
-            MSG_CLOSE = 5;
+            MSG_CLOSE = 5, MSG_REFRESH = 6;
 
     private final Context ctx;
     private final Host host;
@@ -55,10 +168,9 @@ final class Renderer implements Handler.Callback {
     volatile int gen;
 
     // Used only on the render thread.
-    private ParcelFileDescriptor pfd;
-    private PdfRenderer renderer;
-    private PdfRenderer.Page page;
-    private float quickScale;
+    private Source src;
+    private float pageW, pageH;
+    private float quickScale, baseScale;
     private boolean patchShown;
     private final PageView.Viewport vp = new PageView.Viewport();
     private float lastL, lastT, lastR, lastB, lastS;
@@ -83,12 +195,20 @@ final class Renderer implements Handler.Callback {
         h.removeMessages(MSG_PAGE);
         h.removeMessages(MSG_BASE);
         h.removeMessages(MSG_PATCH);
+        h.removeMessages(MSG_REFRESH);
         h.obtainMessage(MSG_PAGE, index, g).sendToTarget();
     }
 
     void requestPatch() {
         h.removeMessages(MSG_PATCH);
         h.sendEmptyMessage(MSG_PATCH);
+    }
+
+    /** Draws the current page again in place (after layers or colors change), keeping the zoom. */
+    void refresh() {
+        h.removeMessages(MSG_REFRESH);
+        h.removeMessages(MSG_PATCH);
+        h.sendEmptyMessage(MSG_REFRESH);
     }
 
     /** Lets go of the file and waits until that is done (needed before overwriting it). */
@@ -120,7 +240,10 @@ final class Renderer implements Handler.Callback {
                 doPage(m.arg1, m.arg2);
                 break;
             case MSG_BASE:
-                doBase(m.arg1);
+                doBase(m.arg1, false);
+                break;
+            case MSG_REFRESH:
+                doBase(gen, true);
                 break;
             case MSG_PATCH:
                 doPatch();
@@ -134,87 +257,82 @@ final class Renderer implements Handler.Callback {
     }
 
     private void closeDoc() {
-        try {
-            if (page != null) page.close();
-        } catch (Throwable ignored) {
-        }
-        page = null;
-        try {
-            if (renderer != null) renderer.close();
-        } catch (Throwable ignored) {
-        }
-        renderer = null;
-        try {
-            if (pfd != null) pfd.close();
-        } catch (Throwable ignored) {
-        }
-        pfd = null;
+        if (src != null) src.close();
+        src = null;
         patchShown = false;
         lastS = 0;
     }
 
     private void doOpen(Uri uri) {
         closeDoc();
+        String why = null;
+        DxfDoc cad = null;
         try {
-            try {
-                pfd = ctx.getContentResolver().openFileDescriptor(uri, "r");
-                if (pfd == null) throw new java.io.IOException("no file");
-                renderer = new PdfRenderer(pfd);
-            } catch (SecurityException se) {
-                throw se;
-            } catch (Exception first) {
-                // Some places (cloud folders) give a file that can't be read in pieces:
-                // bring a copy into the app and read that.
-                try {
-                    if (pfd != null) pfd.close();
-                } catch (Throwable ignored) {
-                }
-                pfd = null;
-                File copy = new File(ctx.getCacheDir(), "open.pdf");
-                try (InputStream in = ctx.getContentResolver().openInputStream(uri);
-                     FileOutputStream out = new FileOutputStream(copy)) {
-                    if (in == null) throw new java.io.IOException("no file");
-                    byte[] buf = new byte[1 << 16];
-                    int n;
-                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-                }
-                pfd = ParcelFileDescriptor.open(copy, ParcelFileDescriptor.MODE_READ_ONLY);
-                renderer = new PdfRenderer(pfd);
+            byte[] head = new byte[1024];
+            int hn = 0;
+            try (InputStream in = ctx.getContentResolver().openInputStream(uri)) {
+                if (in == null) throw new java.io.IOException("no file");
+                int r;
+                while (hn < head.length && (r = in.read(head, hn, head.length - hn)) > 0) hn += r;
             }
-            final int count = renderer.getPageCount();
-            ui.post(() -> host.onDocOpened(count));
-        } catch (final Throwable t) {
-            closeDoc();
-            final String why = (t instanceof SecurityException)
-                    ? "This PDF is locked with a password, or the app is not allowed to read it."
-                    : "This file could not be opened as a PDF.";
-            ui.post(() -> host.onDocFailed(why));
+            String hs = new String(head, 0, hn, "ISO-8859-1");
+            if (hs.contains("%PDF")) {
+                src = new PdfSource(ctx, uri);
+            } else if (hs.startsWith("AC10")) {
+                why = DxfDoc.DWG_MSG;
+            } else {
+                try {
+                    cad = DxfDoc.load(ctx, uri);
+                    src = new CadSource(cad);
+                } catch (DxfDoc.CadException ce) {
+                    // Not a DXF: perhaps a PDF with something before its header.
+                    try {
+                        src = new PdfSource(ctx, uri);
+                    } catch (Throwable t) {
+                        why = ce.getMessage();
+                    }
+                }
+            }
+        } catch (SecurityException se) {
+            why = "This PDF is locked with a password, or the app is not allowed to read it.";
+        } catch (OutOfMemoryError oom) {
+            why = "This drawing is too large for this device's memory.";
+        } catch (Throwable t) {
+            why = "This file could not be opened as a PDF or a DXF drawing.";
         }
+        if (src == null) {
+            closeDoc();
+            final String w = why != null ? why : "This file could not be opened.";
+            ui.post(() -> host.onDocFailed(w));
+            return;
+        }
+        final int count = src.pageCount();
+        final DxfDoc fc = cad;
+        ui.post(() -> host.onDocOpened(count, fc));
     }
 
-    private Bitmap renderWhole(float s, float w, float hgt) {
-        int bw = Math.max(1, Math.round(w * s)), bh = Math.max(1, Math.round(hgt * s));
+    private Bitmap renderWhole(float s) {
+        int bw = Math.max(1, Math.round(pageW * s)), bh = Math.max(1, Math.round(pageH * s));
         Bitmap b = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888);
         b.eraseColor(Color.WHITE);
         Matrix m = new Matrix();
-        m.setScale(bw / w, bh / hgt);
-        page.render(b, null, m, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
+        m.setScale(bw / pageW, bh / pageH);
+        src.render(b, m);
         return b;
     }
 
     private void doPage(final int index, final int g) {
-        if (renderer == null || g != gen) return;
+        if (src == null || g != gen) return;
         try {
-            if (page != null) {
-                page.close();
-                page = null;
-            }
             patchShown = false;
             lastS = 0;
-            page = renderer.openPage(index);
-            final float w = page.getWidth(), hgt = page.getHeight();
+            float[] wh = src.open(index);
+            pageW = wh[0];
+            pageH = wh[1];
+            final float w = pageW, hgt = pageH;
             quickScale = Math.min(1400f / Math.max(w, hgt), 4f);
-            final Bitmap b = renderWhole(quickScale, w, hgt);
+            baseScale = quickScale;
+            final Bitmap b = renderWhole(quickScale);
             if (g != gen) return;
             final float s = quickScale;
             ui.post(() -> host.onPage(g, index, w, hgt, b, s));
@@ -225,20 +343,26 @@ final class Renderer implements Handler.Callback {
     }
 
     /** A finer whole-page picture, as large as memory sensibly allows. */
-    private void doBase(final int g) {
-        if (page == null || g != gen) return;
+    private void doBase(final int g, boolean force) {
+        if (src == null || src.current() < 0 || g != gen) return;
         try {
-            float w = page.getWidth(), hgt = page.getHeight();
-            float s = (float) Math.sqrt(8_000_000.0 / (w * hgt));
-            s = Math.min(s, 4096f / Math.max(w, hgt));
+            float s = (float) Math.sqrt(8_000_000.0 / (pageW * pageH));
+            s = Math.min(s, 4096f / Math.max(pageW, pageH));
             s = Math.min(s, 6f);
-            if (s < quickScale * 1.15f) return;
-            final Bitmap b = renderWhole(s, w, hgt);
+            if (s < quickScale * 1.15f) {
+                if (!force) return;
+                s = quickScale;
+            }
+            final Bitmap b = renderWhole(s);
             if (g != gen) return;
+            baseScale = s;
             final float fs = s;
             ui.post(() -> host.onBase(g, b, fs));
+            if (force) {
+                lastS = 0; // the sharp picture must be drawn again too
+            }
             // The view may already be zoomed in.
-            requestPatch();
+            doPatch();
         } catch (Throwable ignored) {
             // Not enough memory for the finer picture: the quick one stays.
         }
@@ -247,7 +371,7 @@ final class Renderer implements Handler.Callback {
     /** A sharp picture of only what is on screen (plus a margin), at the current zoom. */
     private void doPatch() {
         final int g = gen;
-        if (page == null || !view.snapshot(vp) || vp.page != page.getIndex()) return;
+        if (src == null || !view.snapshot(vp) || vp.page != src.current()) return;
         try {
             if (vp.scale <= vp.baseScale * 1.02f) {
                 if (patchShown) {
@@ -275,7 +399,7 @@ final class Renderer implements Handler.Callback {
             Matrix m = new Matrix();
             m.setScale(s, s);
             m.postTranslate(-l * s, -t * s);
-            page.render(bmp, null, m, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
+            src.render(bmp, m);
 
             if (g != gen) {
                 bmp.recycle();

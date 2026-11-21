@@ -43,7 +43,8 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
     private int pageCount, pageIndex;
     private boolean pendingSig; // place the signature right after it is imported
 
-    private TextView pageLabel, saveBtn;
+    private TextView pageLabel, saveBtn, layersBtn, prevBtn, nextBtn;
+    private DxfDoc cad; // set when the file is a CAD drawing
     private ToolButton bHand, bPen, bHi, bEraser, bSign, bDate, bStamp, bUndo, bRedo;
     private FrameLayout busy;
     private int barPos;
@@ -85,16 +86,21 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         top.addView(title, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        TextView prev = Ui.barButton(this, "‹");
-        prev.setOnClickListener(v -> go(pageIndex - 1));
-        top.addView(prev, barLp());
+        prevBtn = Ui.barButton(this, "‹");
+        prevBtn.setOnClickListener(v -> go(pageIndex - 1));
+        top.addView(prevBtn, barLp());
         pageLabel = Ui.barButton(this, "–");
         pageLabel.setTextColor(Ui.DIM);
         pageLabel.setOnClickListener(v -> askPage());
         top.addView(pageLabel, barLp());
-        TextView next = Ui.barButton(this, "›");
-        next.setOnClickListener(v -> go(pageIndex + 1));
-        top.addView(next, barLp());
+        nextBtn = Ui.barButton(this, "›");
+        nextBtn.setOnClickListener(v -> go(pageIndex + 1));
+        top.addView(nextBtn, barLp());
+
+        layersBtn = Ui.barButton(this, "Layers");
+        layersBtn.setOnClickListener(v -> layersDialog());
+        layersBtn.setVisibility(View.GONE);
+        top.addView(layersBtn, barLp());
 
         saveBtn = Ui.barButton(this, "Save");
         saveBtn.setTextColor(Ui.ACCENT);
@@ -212,6 +218,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
 
         page.penColor = Store.stampColor(this);
         loadMarks();
+        busy.setVisibility(View.VISIBLE); // big drawings take a moment to read
         renderer = new Renderer(this, this, page);
         renderer.open(uri);
     }
@@ -247,16 +254,78 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
     // ---- renderer callbacks ----
 
     @Override
-    public void onDocOpened(int pages) {
+    public void onDocOpened(int pages, DxfDoc cadDoc) {
+        busy.setVisibility(View.GONE);
         pageCount = pages;
+        cad = cadDoc;
+        if (cad != null) {
+            // Restore the layers and print look chosen last time for this drawing.
+            ArrayList<String> off = Store.cadHiddenLayers(this, fileKey);
+            if (off != null) {
+                boolean[] h = new boolean[cad.layerNames.length];
+                for (int i = 0; i < h.length; i++) h[i] = off.contains(cad.layerNames[i]);
+                cad.hidden = h;
+            }
+            cad.mono = Store.cadMono(this);
+            page.maxZoom = 400f;
+            layersBtn.setVisibility(View.VISIBLE);
+            prevBtn.setVisibility(View.GONE);
+            nextBtn.setVisibility(View.GONE);
+            pageLabel.setVisibility(View.GONE);
+            if (cad.truncated) {
+                Ui.toast(this, "This drawing is very large: only part of it could be loaded.");
+            } else if (cad.paperOnly) {
+                Ui.toast(this, "Showing the paper layout (model space is empty).");
+            }
+        }
         int start = Math.min(Store.lastPage(this, fileKey), pages - 1);
         go(Math.max(0, start));
     }
 
     @Override
     public void onDocFailed(String why) {
-        Ui.toast(this, why);
-        finish();
+        busy.setVisibility(View.GONE);
+        new AlertDialog.Builder(this).setMessage(why)
+                .setPositiveButton("OK", (d, w) -> finish())
+                .setOnCancelListener(d -> finish())
+                .show();
+    }
+
+    // ---- CAD layers ----
+
+    private void layersDialog() {
+        final DxfDoc d = cad;
+        if (d == null) return;
+        final int[] used = d.usedLayers;
+        String[] names = new String[used.length + 1];
+        final boolean[] checked = new boolean[used.length + 1];
+        names[0] = "◐  Black & white (print look)";
+        checked[0] = d.mono;
+        boolean[] hid = d.hidden;
+        for (int i = 0; i < used.length; i++) {
+            names[i + 1] = d.layerNames[used[i]];
+            checked[i + 1] = !hid[used[i]];
+        }
+        new AlertDialog.Builder(this).setTitle("Layers")
+                .setMultiChoiceItems(names, checked, (dlg, which, on) -> checked[which] = on)
+                .setPositiveButton("Apply", (dlg, w) -> {
+                    boolean[] h = d.hidden.clone();
+                    for (int i = 0; i < used.length; i++) h[used[i]] = !checked[i + 1];
+                    applyLayers(d, h, checked[0]);
+                })
+                .setNeutralButton("All on", (dlg, w) -> applyLayers(d,
+                        new boolean[d.layerNames.length], d.mono))
+                .setNegativeButton("Cancel", null).show();
+    }
+
+    private void applyLayers(DxfDoc d, boolean[] h, boolean mono) {
+        d.hidden = h;
+        d.mono = mono;
+        ArrayList<String> off = new ArrayList<>();
+        for (int i = 0; i < h.length; i++) if (h[i]) off.add(d.layerNames[i]);
+        Store.setCadHiddenLayers(this, fileKey, off);
+        Store.setCadMono(this, mono);
+        renderer.refresh();
     }
 
     @Override
@@ -793,6 +862,13 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
     // ---- saving the PDF ----
 
     private void askSave() {
+        if (cad != null) {
+            // A CAD drawing is always saved as a new PDF (the drawing plus any marks).
+            new AlertDialog.Builder(this).setTitle("Save")
+                    .setItems(new String[]{"Save as PDF"}, (d, w) -> saveCopy())
+                    .setNegativeButton("Cancel", null).show();
+            return;
+        }
         if (marks.isEmpty()) {
             Ui.toast(this, "Nothing has been drawn yet");
             return;
@@ -807,12 +883,13 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
     }
 
     private void saveCopy() {
-        String base = name.toLowerCase(Locale.ROOT).endsWith(".pdf")
+        String low = name.toLowerCase(Locale.ROOT);
+        String base = low.endsWith(".pdf") || low.endsWith(".dxf")
                 ? name.substring(0, name.length() - 4) : name;
         Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
         i.addCategory(Intent.CATEGORY_OPENABLE);
         i.setType("application/pdf");
-        i.putExtra(Intent.EXTRA_TITLE, base + " - marked.pdf");
+        i.putExtra(Intent.EXTRA_TITLE, base + (cad != null && marks.isEmpty() ? ".pdf" : " - marked.pdf"));
         try {
             startActivityForResult(i, REQ_SAVE_COPY);
         } catch (Exception e) {
@@ -835,7 +912,8 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
             String err = null;
             boolean overwrote = false;
             try {
-                File tmp = Exporter.build(this, uri, marks);
+                File tmp = cad != null ? Exporter.buildCad(this, cad, marks)
+                        : Exporter.build(this, uri, marks);
                 if (dst != null) {
                     Exporter.write(this, tmp, dst);
                 } else {

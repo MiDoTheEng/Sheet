@@ -132,6 +132,35 @@ final class Store {
         p(c).edit().putBoolean("tickBoxed", v).apply();
     }
 
+    // ---- CAD drawings: hidden layers per file, and the black & white look ----
+
+    /** Names of hidden layers for this drawing, or null if never chosen. */
+    static ArrayList<String> cadHiddenLayers(Context c, String key) {
+        String s = p(c).getString("cadLayers_" + key, null);
+        if (s == null) return null;
+        ArrayList<String> out = new ArrayList<>();
+        try {
+            JSONArray a = new JSONArray(s);
+            for (int i = 0; i < a.length(); i++) out.add(a.getString(i));
+        } catch (Exception ignored) {
+        }
+        return out;
+    }
+
+    static void setCadHiddenLayers(Context c, String key, ArrayList<String> names) {
+        JSONArray a = new JSONArray();
+        for (String n : names) a.put(n);
+        p(c).edit().putString("cadLayers_" + key, a.toString()).apply();
+    }
+
+    static boolean cadMono(Context c) {
+        return p(c).getBoolean("cadMono", false);
+    }
+
+    static void setCadMono(Context c, boolean v) {
+        p(c).edit().putBoolean("cadMono", v).apply();
+    }
+
     static int stampColor(Context c) {
         return p(c).getInt("stampColor", 0xFFE53935);
     }
