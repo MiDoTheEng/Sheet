@@ -94,6 +94,14 @@ final class Marks {
         int font;
         /** 0 none, 1 green check, 2 red check, 3 red cross. On TEXT it sits beside the text. */
         int tick;
+        /** Line thickness of a rectangle or oval, in page units; 0 means the old automatic size. */
+        float lw;
+
+        /** The line thickness a rectangle or oval is drawn with. */
+        float shapeWidth() {
+            if (lw > 0) return lw;
+            return Math.max(1.2f, Math.min(rect.width(), rect.height()) * 0.05f);
+        }
         final RectF rect = new RectF();
     }
 
@@ -324,6 +332,7 @@ final class Marks {
                     o.put("b", s.boxed);
                     o.put("f", s.font);
                     o.put("tk", s.tick);
+                    o.put("lw", s.lw);
                     o.put("l", s.rect.left);
                     o.put("tp", s.rect.top);
                     o.put("r", s.rect.right);
@@ -368,6 +377,7 @@ final class Marks {
                     s.boxed = o.optBoolean("b", true);
                     s.font = o.optInt("f", 0);
                     s.tick = o.optInt("tk", 0);
+                    s.lw = (float) o.optDouble("lw", 0);
                     s.rect.set((float) o.getDouble("l"), (float) o.getDouble("tp"),
                             (float) o.getDouble("r"), (float) o.getDouble("bt"));
                     l.add(s);

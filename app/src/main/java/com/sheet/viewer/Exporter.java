@@ -176,7 +176,7 @@ final class Exporter {
 
     /** Rectangles and ovals go into the PDF as real shapes, sharp at any zoom. */
     private static void shape(PDPageContentStream cs, Marks.Stamp s) throws Exception {
-        float sw = Math.max(1.2f, Math.min(s.rect.width(), s.rect.height()) * 0.05f);
+        float sw = s.shapeWidth();
         float in = sw / 2f;
         float l = s.rect.left + in, t = s.rect.top + in;
         float w = s.rect.width() - sw, h = s.rect.height() - sw;

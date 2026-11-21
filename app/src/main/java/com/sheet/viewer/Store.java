@@ -161,6 +161,15 @@ final class Store {
         p(c).edit().putBoolean("cadMono", v).apply();
     }
 
+    /** Thickness level for shapes: 0 thin, 1 medium, 2 thick, 3 extra thick. */
+    static int shapeLevel(Context c) {
+        return p(c).getInt("shapeLevel", 1);
+    }
+
+    static void setShapeLevel(Context c, int v) {
+        p(c).edit().putInt("shapeLevel", v).apply();
+    }
+
     static int stampColor(Context c) {
         return p(c).getInt("stampColor", 0xFFE53935);
     }

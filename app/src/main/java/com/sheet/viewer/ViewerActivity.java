@@ -385,10 +385,16 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
             int pp = Ui.dp(this, 20);
             box.setPadding(pp, pp, pp, 0);
             final int[] color = {s.color};
+            box.addView(dialogCaption("Color"));
             box.addView(colorRow(s.color, c -> color[0] = c, false));
-            new AlertDialog.Builder(this).setTitle("Shape color").setView(box)
+            final int[] level = {levelOf(s)};
+            box.addView(dialogCaption("Line thickness"));
+            box.addView(chipRow(THICK_NAMES, level[0], v -> level[0] = v));
+            new AlertDialog.Builder(this).setTitle("Edit shape").setView(box)
                     .setPositiveButton("Done", (d, w) -> {
                         s.color = color[0];
+                        s.lw = thickness(level[0]);
+                        Store.setShapeLevel(this, level[0]);
                         page.refresh();
                     })
                     .setNegativeButton("Cancel", null).show();
@@ -654,18 +660,63 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
 
     // ---- shapes ----
 
+    private static final String[] THICK_NAMES = {"Thin", "Medium", "Thick", "Extra"};
+    private static final float[] THICK = {0.0015f, 0.003f, 0.006f, 0.011f};
+
+    private float thickness(int level) {
+        return Math.max(0.5f, page.pageMin() * THICK[Math.max(0, Math.min(3, level))]);
+    }
+
+    /** The thickness level closest to a shape's current line, for showing in the dialog. */
+    private int levelOf(Marks.Stamp s) {
+        float w = s.shapeWidth();
+        int best = 1;
+        float bestD = Float.MAX_VALUE;
+        for (int i = 0; i < THICK.length; i++) {
+            float d = Math.abs(thickness(i) - w);
+            if (d < bestD) {
+                bestD = d;
+                best = i;
+            }
+        }
+        return best;
+    }
+
     private void shapeMenu() {
-        new AlertDialog.Builder(this).setTitle("Place a shape (uses the pen color)")
-                .setItems(new String[]{"Rectangle", "Square", "Oval", "Circle"}, (d, w) -> {
-                    Marks.Stamp s = new Marks.Stamp();
-                    s.kind = (w <= 1) ? Marks.Stamp.RECT : Marks.Stamp.OVAL;
-                    s.color = page.penColor;
-                    boolean even = (w == 1 || w == 3);
-                    page.place(s, even ? 1f : 1.6f, even ? 0.18f : 0.3f, 0.35f);
-                    setTool(PageView.HAND);
-                    bHand.setOn(true);
-                })
-                .show();
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int p = Ui.dp(this, 20);
+        box.setPadding(p, Ui.dp(this, 4), p, 0);
+
+        final int[] level = {Store.shapeLevel(this)};
+        box.addView(dialogCaption("Line thickness"));
+        box.addView(chipRow(THICK_NAMES, level[0], v -> level[0] = v));
+        box.addView(dialogCaption("Shape (uses the pen color)"));
+
+        final AlertDialog[] dlg = new AlertDialog[1];
+        String[] kinds = {"\u25AD   Rectangle", "\u25A1   Square", "\u2B2D   Oval", "\u25CB   Circle"};
+        for (int i = 0; i < kinds.length; i++) {
+            final int w = i;
+            TextView row = Ui.label(this, kinds[i], 17, Ui.TEXT);
+            row.setPadding(Ui.dp(this, 6), Ui.dp(this, 13), Ui.dp(this, 6), Ui.dp(this, 13));
+            box.addView(row);
+            row.setOnClickListener(v -> {
+                Store.setShapeLevel(this, level[0]);
+                Marks.Stamp s = new Marks.Stamp();
+                s.kind = (w <= 1) ? Marks.Stamp.RECT : Marks.Stamp.OVAL;
+                s.color = page.penColor;
+                s.lw = thickness(level[0]);
+                boolean even = (w == 1 || w == 3);
+                page.place(s, even ? 1f : 1.6f, even ? 0.18f : 0.3f, 0.35f);
+                setTool(PageView.HAND);
+                bHand.setOn(true);
+                if (dlg[0] != null) dlg[0].dismiss();
+            });
+        }
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        sv.addView(box);
+        dlg[0] = new AlertDialog.Builder(this).setTitle("Place a shape").setView(sv)
+                .setNegativeButton("Cancel", null).show();
     }
 
     // ---- comments (free text) ----

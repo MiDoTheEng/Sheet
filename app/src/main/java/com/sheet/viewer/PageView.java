@@ -416,7 +416,7 @@ final class PageView extends View {
             } else if (st.kind == Marks.Stamp.RECT || st.kind == Marks.Stamp.OVAL) {
                 ink.setXfermode(null);
                 ink.setColor(st.color);
-                float sw = Math.max(1.2f, Math.min(st.rect.width(), st.rect.height()) * 0.05f);
+                float sw = st.shapeWidth();
                 ink.setStrokeWidth(sw);
                 float in = sw / 2f;
                 if (st.kind == Marks.Stamp.RECT) {
@@ -458,6 +458,11 @@ final class PageView extends View {
             }
         }
         return null;
+    }
+
+    /** The page's shorter side, in page units (used to size shape lines). */
+    float pageMin() {
+        return Math.min(pageW, pageH);
     }
 
     // ---- stamps ----
