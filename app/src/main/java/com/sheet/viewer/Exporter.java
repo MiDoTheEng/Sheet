@@ -36,12 +36,13 @@ final class Exporter {
     private Exporter() {}
 
     /** Builds the marked-up PDF as a temporary file inside the app. */
-    static File build(Context ctx, Uri src, Marks marks) throws Exception {
+    static File build(Context ctx, Uri src, Marks marks, boolean schedule, String title) throws Exception {
         PDFBoxResourceLoader.init(ctx.getApplicationContext());
         File tmp = new File(ctx.getCacheDir(), "export.pdf");
         try (InputStream in = ctx.getContentResolver().openInputStream(src);
              PDDocument doc = PDDocument.load(in, MemoryUsageSetting.setupTempFileOnly())) {
             applyMarks(ctx, doc, marks);
+            if (schedule) addSchedule(doc, marks, title);
             doc.save(tmp);
         }
         return tmp;
@@ -51,7 +52,7 @@ final class Exporter {
      * Turns a DXF drawing into a PDF (real vector lines, so it stays sharp and prints well)
      * with the marks on top. Hidden layers stay hidden.
      */
-    static File buildCad(Context ctx, DxfDoc d, Marks marks) throws Exception {
+    static File buildCad(Context ctx, DxfDoc d, Marks marks, String title) throws Exception {
         PDFBoxResourceLoader.init(ctx.getApplicationContext());
         File tmp = new File(ctx.getCacheDir(), "export.pdf");
         try (PDDocument doc = new PDDocument(MemoryUsageSetting.setupTempFileOnly())) {
@@ -70,14 +71,107 @@ final class Exporter {
                 d.writePdf(cs, font);
             }
             applyMarks(ctx, doc, marks);
+            addSchedule(doc, marks, title);
             doc.save(tmp);
         }
         return tmp;
     }
 
+    /** Adds "Site notes" pages listing every pipe, duct, fixture and piece of equipment. */
+    private static void addSchedule(PDDocument doc, Marks marks, String title) throws Exception {
+        ArrayList<Object[]> items = marks.siteItems();
+        if (items.isEmpty()) return;
+        boolean multi = doc.getNumberOfPages() > 1;
+        for (Bitmap b : Mep.schedulePages(items, title, multi)) {
+            PDPage pg = new PDPage(PDRectangle.A4);
+            doc.addPage(pg);
+            PDImageXObject img = LosslessFactory.createFromImage(doc, b);
+            try (PDPageContentStream cs = new PDPageContentStream(doc, pg)) {
+                cs.drawImage(img, 0, 0, PDRectangle.A4.getWidth(), PDRectangle.A4.getHeight());
+            }
+            b.recycle();
+        }
+    }
+
+    /** A picture placed centred at (cx, cy), turned by ang radians, w by h page units. */
+    private static void image(PDDocument doc, PDPageContentStream cs, Bitmap b, float cx, float cy,
+                              float ang, float w, float h) throws Exception {
+        PDImageXObject img = LosslessFactory.createFromImage(doc, b);
+        cs.saveGraphicsState();
+        cs.transform(Matrix.getTranslateInstance(cx, cy));
+        if (ang != 0) cs.transform(Matrix.getRotateInstance(ang, 0, 0));
+        cs.transform(new Matrix(1, 0, 0, -1, -w / 2, h / 2));
+        cs.drawImage(img, 0, 0, w, h);
+        cs.restoreGraphicsState();
+        b.recycle();
+    }
+
+    private static void rgb(PDPageContentStream cs, int color, boolean stroke) throws Exception {
+        float r = ((color >> 16) & 255) / 255f, g = ((color >> 8) & 255) / 255f, b = (color & 255) / 255f;
+        if (stroke) cs.setStrokingColor(r, g, b);
+        else cs.setNonStrokingColor(r, g, b);
+    }
+
+    /** A pipe or duct: real vector lines, with its label as a picture. */
+    private static void run(PDDocument doc, PDPageContentStream cs, Marks.Run r, int num) throws Exception {
+        if (r.points() < 2) return;
+        int color = r.color();
+        cs.saveGraphicsState();
+        cs.setLineCapStyle(1);
+        cs.setLineJoinStyle(1);
+        if (r.kind == Marks.Run.DUCT) {
+            float[][] e = Mep.ductEdges(r.pts, r.n, r.w / 2);
+            cs.saveGraphicsState();
+            PDExtendedGraphicsState gs = new PDExtendedGraphicsState();
+            gs.setNonStrokingAlphaConstant(0.2f);
+            cs.setGraphicsStateParameters(gs);
+            rgb(cs, color, false);
+            ductPath(cs, e, r.n);
+            cs.fill();
+            cs.restoreGraphicsState();
+            rgb(cs, color, true);
+            cs.setLineJoinStyle(0);
+            cs.setLineWidth(Math.max(r.w * 0.1f, r.th * 0.12f));
+            ductPath(cs, e, r.n);
+            cs.stroke();
+        } else {
+            rgb(cs, color, true);
+            cs.setLineWidth(r.w);
+            if (Mep.PIPE_DASH[r.clampSys()]) cs.setLineDashPattern(new float[]{r.w * 4f, r.w * 2.5f}, 0);
+            cs.moveTo(r.pts[0], r.pts[1]);
+            for (int i = 2; i + 1 < r.n; i += 2) cs.lineTo(r.pts[i], r.pts[i + 1]);
+            cs.stroke();
+        }
+        cs.restoreGraphicsState();
+        float[] lp = Mep.runLabelPos(r, num);
+        if (lp != null) {
+            image(doc, cs, Mep.labelBitmap(r.label(), color, r.th, num, new float[]{lp[3], lp[4]}),
+                    lp[0], lp[1], lp[2], lp[3], lp[4]);
+        }
+    }
+
+    private static void ductPath(PDPageContentStream cs, float[][] e, int n) throws Exception {
+        cs.moveTo(e[0][0], e[0][1]);
+        for (int i = 2; i < n; i += 2) cs.lineTo(e[0][i], e[0][i + 1]);
+        for (int i = n - 2; i >= 0; i -= 2) cs.lineTo(e[1][i], e[1][i + 1]);
+        cs.closePath();
+    }
+
+    /** A fixture or piece of equipment, with its tag/size label under it. */
+    private static void sym(PDDocument doc, PDPageContentStream cs, Marks.Stamp s, int num) throws Exception {
+        image(doc, cs, Mep.symbolBitmap(s), s.rect.centerX(), s.rect.centerY(), 0,
+                s.rect.width(), s.rect.height());
+        String lab = Mep.symLabel(s);
+        if (lab.isEmpty() && num == 0) return;
+        float[] sz = Mep.labelSize(lab, s.th, num);
+        image(doc, cs, Mep.labelBitmap(lab, s.color, s.th, num, sz), s.rect.centerX(),
+                s.rect.bottom + s.th * 0.15f + sz[1] / 2, 0, sz[0], sz[1]);
+    }
+
     private static void applyMarks(Context ctx, PDDocument doc, Marks marks) throws Exception {
         {
             PDImageXObject sig = null;
+            int num = 0; // note numbers run through the whole file, as on screen
             for (int index : marks.usedPages()) {
                 if (index < 0 || index >= doc.getNumberOfPages()) continue;
                 ArrayList<Marks.Item> items = marks.list(index);
@@ -108,8 +202,13 @@ final class Exporter {
                     cs.setLineCapStyle(1);
                     cs.setLineJoinStyle(1);
                     for (Marks.Item it : items) {
+                        int n = Marks.hasNote(it) ? ++num : 0;
                         if (it instanceof Marks.Stroke) {
                             stroke(cs, (Marks.Stroke) it);
+                        } else if (it instanceof Marks.Run) {
+                            run(doc, cs, (Marks.Run) it, n);
+                        } else if (((Marks.Stamp) it).kind == Marks.Stamp.SYM) {
+                            sym(doc, cs, (Marks.Stamp) it, n);
                         } else if (((Marks.Stamp) it).kind == Marks.Stamp.RECT
                                 || ((Marks.Stamp) it).kind == Marks.Stamp.OVAL) {
                             shape(cs, (Marks.Stamp) it);

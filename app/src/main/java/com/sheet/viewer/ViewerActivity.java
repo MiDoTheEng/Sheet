@@ -45,6 +45,8 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
 
     private TextView pageLabel, saveBtn, layersBtn, prevBtn, nextBtn;
     private DxfDoc cad; // set when the file is a CAD drawing
+    private LinearLayout runBar;
+    private TextView runTitle, runInfo, runDone;
     private ToolButton bHand, bPen, bHi, bEraser, bSign, bDate, bStamp, bUndo, bRedo;
     private FrameLayout busy;
     private int barPos;
@@ -124,6 +126,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         plp.gravity = Gravity.CENTER;
         busy.addView(pb, plp);
         busy.setVisibility(View.GONE);
+        buildRunBar(mid);
         mid.addView(busy, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -195,6 +198,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         bStamp = tool(bar, ToolButton.STAMP, "Stamp", v -> stampMenu());
         tool(bar, ToolButton.TICK, "Tick", v -> tickMenu());
         tool(bar, ToolButton.SHAPES, "Shape", v -> shapeMenu());
+        tool(bar, ToolButton.MEP, "MEP", v -> mepMenu());
         bUndo = tool(bar, ToolButton.UNDO, "Undo", v -> {
             int p = marks.undo();
             if (p == pageIndex) page.refresh();
@@ -238,6 +242,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
     }
 
     private void setTool(int t) {
+        if (page.drawingRun()) cancelRunMode();
         page.tool = t;
         page.deselect();
         bHand.setOn(t == PageView.HAND);
@@ -377,6 +382,268 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         marksChangedUi();
     }
 
+    // ---- site markup: pipes, ducts, fixtures and equipment ----
+
+    @Override
+    public void onEditSite(Marks.Item it) {
+        siteDialog(it, pageIndex);
+    }
+
+    @Override
+    public void onDraftChanged(int n) {
+        runInfo.setText(n == 0 ? "Tap where the run starts. Drag to move around."
+                : n == 1 ? "Tap the next point \u2014 it snaps straight or to 45\u00B0"
+                : n + " points \u00B7 tap Done when the run is finished");
+        runDone.setAlpha(n >= 2 ? 1f : 0.4f);
+    }
+
+    private void buildRunBar(FrameLayout mid) {
+        runBar = new LinearLayout(this);
+        runBar.setOrientation(LinearLayout.HORIZONTAL);
+        runBar.setGravity(Gravity.CENTER_VERTICAL);
+        runBar.setBackground(Ui.round(0xF2202228, Ui.dp(this, 14)));
+        int p = Ui.dp(this, 12);
+        runBar.setPadding(p, Ui.dp(this, 8), Ui.dp(this, 6), Ui.dp(this, 8));
+        runBar.setClickable(true); // touches on the bar don't reach the page
+
+        LinearLayout texts = new LinearLayout(this);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        runTitle = Ui.label(this, "", 15, Ui.TEXT);
+        runTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        runInfo = Ui.label(this, "", 12, Ui.DIM);
+        texts.addView(runTitle);
+        texts.addView(runInfo);
+        runBar.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView undoPt = Ui.barButton(this, "\u21B6");
+        undoPt.setTextSize(22);
+        undoPt.setOnClickListener(v -> page.undoDraftPoint());
+        runBar.addView(undoPt, new LinearLayout.LayoutParams(Ui.dp(this, 46), Ui.dp(this, 44)));
+        runDone = Ui.barButton(this, "Done");
+        runDone.setTextColor(Ui.ACCENT);
+        runDone.setOnClickListener(v -> finishRunMode());
+        runBar.addView(runDone, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 44)));
+        TextView cancel = Ui.barButton(this, "\u2715");
+        cancel.setTextColor(Ui.DIM);
+        cancel.setOnClickListener(v -> cancelRunMode());
+        runBar.addView(cancel, new LinearLayout.LayoutParams(Ui.dp(this, 44), Ui.dp(this, 44)));
+
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.gravity = Gravity.TOP;
+        int m = Ui.dp(this, 8);
+        lp.setMargins(m, m, m, 0);
+        runBar.setVisibility(View.GONE);
+        mid.addView(runBar, lp);
+    }
+
+    private void menuRow(LinearLayout box, String text, int color, final AlertDialog[] dlg,
+                         final Runnable action) {
+        TextView t = Ui.label(this, text, 16, Ui.TEXT);
+        t.setPadding(Ui.dp(this, 4), Ui.dp(this, 11), Ui.dp(this, 4), Ui.dp(this, 11));
+        if (color != 0) {
+            android.graphics.drawable.GradientDrawable d = Ui.dot(color, 0, 0);
+            int s = Ui.dp(this, 14);
+            d.setBounds(0, 0, s, s);
+            t.setCompoundDrawables(d, null, null, null);
+            t.setCompoundDrawablePadding(Ui.dp(this, 12));
+        }
+        t.setOnClickListener(v -> {
+            if (dlg[0] != null) dlg[0].dismiss();
+            action.run();
+        });
+        box.addView(t);
+    }
+
+    private void mepMenu() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int p = Ui.dp(this, 20);
+        box.setPadding(p, 0, p, Ui.dp(this, 8));
+        final AlertDialog[] dlg = new AlertDialog[1];
+
+        int count = marks.siteItems().size();
+        if (count > 0) {
+            menuRow(box, "\u2630   List of site items (" + count + ")", 0, dlg, this::siteList);
+        }
+        box.addView(dialogCaption("PIPES \u2014 then tap points along the route"));
+        for (int i = 0; i < Mep.PIPE_NAMES.length; i++) {
+            final int sys = i;
+            menuRow(box, Mep.PIPE_NAMES[i] + "   " + Mep.PIPE_ABBR[i], Mep.PIPE_COLOR[i], dlg,
+                    () -> startRun(Marks.Run.PIPE, sys));
+        }
+        box.addView(dialogCaption("DUCTS"));
+        for (int i = 0; i < Mep.DUCT_NAMES.length; i++) {
+            final int sys = i;
+            menuRow(box, Mep.DUCT_NAMES[i] + "   " + Mep.DUCT_ABBR[i], Mep.DUCT_COLOR[i], dlg,
+                    () -> startRun(Marks.Run.DUCT, sys));
+        }
+        box.addView(dialogCaption("FIXTURES & EQUIPMENT"));
+        for (int i = 0; i < Mep.SYM_NAMES.length; i++) {
+            final int sym = i;
+            menuRow(box, Mep.SYM_NAMES[i], Mep.symColor(i), dlg, () -> placeSym(sym));
+        }
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        sv.addView(box);
+        dlg[0] = new AlertDialog.Builder(this).setTitle("Site markup").setView(sv)
+                .setNegativeButton("Close", null).show();
+    }
+
+    private void startRun(int kind, int sys) {
+        setTool(PageView.HAND);
+        bHand.setOn(false);
+        page.startRun(kind, sys);
+        boolean duct = kind == Marks.Run.DUCT;
+        runTitle.setText((duct ? Mep.DUCT_NAMES[sys] + " duct" : Mep.PIPE_NAMES[sys] + " pipe"));
+        runTitle.setTextColor(duct ? Mep.DUCT_COLOR[sys] : Mep.PIPE_COLOR[sys]);
+        onDraftChanged(0);
+        runBar.setVisibility(View.VISIBLE);
+    }
+
+    private void finishRunMode() {
+        if (page.draftPoints() < 2) {
+            Ui.toast(this, "Tap at least two points along the route first");
+            return;
+        }
+        Marks.Run r = page.finishRun();
+        runBar.setVisibility(View.GONE);
+        bHand.setOn(true);
+        marksChangedUi();
+        if (r != null) siteDialog(r, pageIndex); // straight away: size, tag, note
+    }
+
+    private void cancelRunMode() {
+        page.cancelRun();
+        runBar.setVisibility(View.GONE);
+        bHand.setOn(true);
+    }
+
+    private void placeSym(int sym) {
+        setTool(PageView.HAND);
+        Marks.Stamp s = new Marks.Stamp();
+        s.kind = Marks.Stamp.SYM;
+        s.sym = sym;
+        s.color = Mep.symColor(sym);
+        s.th = Ui.dp(this, 11) / page.viewScale();
+        float aspect = Mep.SYM_ASPECT[sym];
+        page.place(s, aspect, 0.12f * Math.max(1f, aspect * 0.65f), 0.15f);
+        bHand.setOn(true);
+        marksChangedUi();
+    }
+
+    /** Size, tag and note for a pipe, duct, fixture or piece of equipment. */
+    private void siteDialog(final Marks.Item it, final int pg) {
+        final boolean isRun = it instanceof Marks.Run;
+        final Marks.Run r = isRun ? (Marks.Run) it : null;
+        final Marks.Stamp s = isRun ? null : (Marks.Stamp) it;
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int p = Ui.dp(this, 20);
+        box.setPadding(p, 0, p, 0);
+
+        final int[] sys = {isRun ? r.sys : 0};
+        if (isRun) {
+            box.addView(dialogCaption("System"));
+            String[] names = r.kind == Marks.Run.DUCT ? Mep.DUCT_NAMES : Mep.PIPE_NAMES;
+            HorizontalScrollView hs = new HorizontalScrollView(this);
+            hs.setHorizontalScrollBarEnabled(false);
+            hs.addView(chipRow(names, r.clampSys(), v -> sys[0] = v));
+            box.addView(hs);
+        }
+
+        box.addView(dialogCaption(isRun ? (r.kind == Marks.Run.DUCT ? "Size" : "Diameter")
+                : "Size / capacity"));
+        final EditText size = new EditText(this);
+        size.setSingleLine(true);
+        size.setText(isRun ? r.size : s.size);
+        size.setHint(isRun ? (r.kind == Marks.Run.DUCT ? "e.g. 600x400" : "e.g. \u00D850") : "e.g. 2 TR, 600x600");
+        box.addView(size);
+        if (isRun) {
+            final String[] chips = r.kind == Marks.Run.DUCT ? Mep.DUCT_SIZES : Mep.PIPE_SIZES;
+            HorizontalScrollView hs = new HorizontalScrollView(this);
+            hs.setHorizontalScrollBarEnabled(false);
+            hs.addView(chipRow(chips, -1, v -> {
+                size.setText(chips[v]);
+                size.setSelection(size.length());
+            }));
+            box.addView(hs);
+        }
+
+        box.addView(dialogCaption("Tag"));
+        final EditText tag = new EditText(this);
+        tag.setSingleLine(true);
+        tag.setText(isRun ? r.tag : s.tag);
+        tag.setHint(isRun ? "e.g. P-12" : "e.g. FCU-01");
+        box.addView(tag);
+
+        box.addView(dialogCaption("Note"));
+        final EditText note = new EditText(this);
+        note.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        note.setMinLines(2);
+        note.setMaxLines(6);
+        note.setText(isRun ? r.note : s.note);
+        note.setHint("e.g. runs above false ceiling, 300 mm lower than design");
+        box.addView(note);
+
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        sv.addView(box);
+        String title = isRun ? r.describe() : Mep.SYM_NAMES[Math.max(0, Math.min(Mep.SYM_NAMES.length - 1, s.sym))];
+        new AlertDialog.Builder(this).setTitle(title).setView(sv)
+                .setPositiveButton("Done", (d, w) -> {
+                    if (isRun) {
+                        r.sys = sys[0];
+                        r.size = size.getText().toString().trim();
+                        r.tag = tag.getText().toString().trim();
+                        r.note = note.getText().toString().trim();
+                    } else {
+                        s.size = size.getText().toString().trim();
+                        s.tag = tag.getText().toString().trim();
+                        s.note = note.getText().toString().trim();
+                    }
+                    page.refresh();
+                    marksChangedUi();
+                })
+                .setNeutralButton("Delete", (d, w) -> {
+                    marks.remove(pg, it);
+                    page.refresh();
+                    marksChangedUi();
+                })
+                .setNegativeButton("Cancel", null).show();
+    }
+
+    /** Every pipe, duct, fixture and piece of equipment in the file, with its details. */
+    private void siteList() {
+        final ArrayList<Object[]> items = marks.siteItems();
+        if (items.isEmpty()) {
+            Ui.toast(this, "No site items yet");
+            return;
+        }
+        String[] rows = new String[items.size()];
+        for (int i = 0; i < rows.length; i++) {
+            Object[] row = items.get(i);
+            Marks.Item it = (Marks.Item) row[1];
+            int num = (Integer) row[2];
+            StringBuilder sb = new StringBuilder();
+            if (num > 0) sb.append('(').append(num).append(")  ");
+            sb.append(Mep.describe(it));
+            String sz = Mep.sizeOf(it).trim(), tg = Mep.tagOf(it).trim(), nt = Mep.noteOf(it).trim();
+            if (!sz.isEmpty()) sb.append("  ").append(sz);
+            if (!tg.isEmpty()) sb.append("  \u00B7  ").append(tg);
+            if (pageCount > 1) sb.append("  \u00B7  p.").append((Integer) row[0] + 1);
+            if (!nt.isEmpty()) sb.append("\n").append(nt);
+            rows[i] = sb.toString();
+        }
+        new AlertDialog.Builder(this).setTitle("Site items")
+                .setItems(rows, (d, w) -> {
+                    Object[] row = items.get(w);
+                    int pg = (Integer) row[0];
+                    if (pg != pageIndex) go(pg);
+                    siteDialog((Marks.Item) row[1], pg);
+                })
+                .setNegativeButton("Close", null).show();
+    }
+
     @Override
     public void onEditStamp(final Marks.Stamp s) {
         if (s.kind == Marks.Stamp.RECT || s.kind == Marks.Stamp.OVAL) {
@@ -447,6 +714,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
 
     private void go(int index) {
         if (pageCount <= 0) return;
+        if (page.drawingRun()) cancelRunMode();
         index = Math.max(0, Math.min(pageCount - 1, index));
         pageIndex = index;
         pageLabel.setText((index + 1) + " / " + pageCount);
@@ -963,8 +1231,8 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
             String err = null;
             boolean overwrote = false;
             try {
-                File tmp = cad != null ? Exporter.buildCad(this, cad, marks)
-                        : Exporter.build(this, uri, marks);
+                File tmp = cad != null ? Exporter.buildCad(this, cad, marks, name)
+                        : Exporter.build(this, uri, marks, dst != null, name);
                 if (dst != null) {
                     Exporter.write(this, tmp, dst);
                 } else {
@@ -1076,6 +1344,10 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
 
     @Override
     public void onBackPressed() {
+        if (page.drawingRun()) {
+            cancelRunMode();
+            return;
+        }
         if (page.hasSelection()) {
             page.deselect();
             return;

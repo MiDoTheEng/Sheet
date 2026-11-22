@@ -84,8 +84,124 @@ final class Marks {
         }
     }
 
+    /**
+     * A pipe or duct drawn on site, point by point, with its size, tag and note.
+     * Points are in page units.
+     */
+    static final class Run extends Item {
+        static final int PIPE = 0, DUCT = 1;
+        int kind, sys;
+        String size = "", tag = "", note = "";
+        /** Line thickness (pipe) or body width (duct), and label text height, in page units. */
+        float w, th;
+        float[] pts = new float[16];
+        int n; // floats used
+
+        int points() {
+            return n / 2;
+        }
+
+        void add(float x, float y) {
+            if (n + 2 > pts.length) pts = java.util.Arrays.copyOf(pts, pts.length * 2);
+            pts[n++] = x;
+            pts[n++] = y;
+        }
+
+        void removeLast() {
+            if (n >= 2) n -= 2;
+        }
+
+        void offset(float dx, float dy) {
+            for (int i = 0; i + 1 < n; i += 2) {
+                pts[i] += dx;
+                pts[i + 1] += dy;
+            }
+        }
+
+        int color() {
+            return kind == DUCT ? Mep.DUCT_COLOR[clampSys()] : Mep.PIPE_COLOR[clampSys()];
+        }
+
+        int clampSys() {
+            int max = kind == DUCT ? Mep.DUCT_NAMES.length : Mep.PIPE_NAMES.length;
+            return Math.max(0, Math.min(max - 1, sys));
+        }
+
+        /** What is written along it, e.g. "P-12  CW \u00D825". */
+        String label() {
+            String abbr = kind == DUCT ? Mep.DUCT_ABBR[clampSys()] : Mep.PIPE_ABBR[clampSys()];
+            StringBuilder sb = new StringBuilder();
+            if (!tag.trim().isEmpty()) sb.append(tag.trim()).append("  ");
+            sb.append(abbr);
+            if (!size.trim().isEmpty()) sb.append(' ').append(size.trim());
+            return sb.toString();
+        }
+
+        String describe() {
+            return kind == DUCT ? Mep.DUCT_NAMES[clampSys()] + " duct" : Mep.PIPE_NAMES[clampSys()] + " pipe";
+        }
+
+        boolean near(float x, float y, float r) {
+            float pad = r + (kind == DUCT ? w / 2f : w / 2f);
+            for (int i = 2; i + 1 < n; i += 2) {
+                float ax = pts[i - 2], ay = pts[i - 1], bx = pts[i], by = pts[i + 1];
+                float dx = bx - ax, dy = by - ay;
+                float len2 = dx * dx + dy * dy;
+                float t = len2 == 0 ? 0 : ((x - ax) * dx + (y - ay) * dy) / len2;
+                t = Math.max(0, Math.min(1, t));
+                if (Math.hypot(x - (ax + t * dx), y - (ay + t * dy)) <= pad) return true;
+            }
+            return false;
+        }
+    }
+
+    /** True for site items (pipes, ducts, fixtures, equipment) that carry a written note. */
+    static boolean hasNote(Item it) {
+        if (it instanceof Run) return !((Run) it).note.trim().isEmpty();
+        if (it instanceof Stamp && ((Stamp) it).kind == Stamp.SYM) return !((Stamp) it).note.trim().isEmpty();
+        return false;
+    }
+
+    static boolean isSite(Item it) {
+        return it instanceof Run || (it instanceof Stamp && ((Stamp) it).kind == Stamp.SYM);
+    }
+
+    /** How many noted site items come before this page (so note numbers run through the file). */
+    int notesBefore(int page) {
+        int c = 0;
+        for (int i = 0; i < pages.size(); i++) {
+            if (pages.keyAt(i) >= page) break;
+            for (Item it : pages.valueAt(i)) if (hasNote(it)) c++;
+        }
+        return c;
+    }
+
+    /** Every site item in order: each entry is {page, item, note number or 0}. */
+    ArrayList<Object[]> siteItems() {
+        ArrayList<Object[]> out = new ArrayList<>();
+        int num = 0;
+        for (int i = 0; i < pages.size(); i++) {
+            for (Item it : pages.valueAt(i)) {
+                if (!isSite(it)) continue;
+                out.add(new Object[]{pages.keyAt(i), it, hasNote(it) ? ++num : 0});
+            }
+        }
+        return out;
+    }
+
+    /** Which page an item is on, or -1. */
+    int pageOf(Item it) {
+        for (int i = 0; i < pages.size(); i++) if (pages.valueAt(i).contains(it)) return pages.keyAt(i);
+        return -1;
+    }
+
     static final class Stamp extends Item {
-        static final int SIG = 0, TEXT = 1, TICK = 2, RECT = 3, OVAL = 4;
+        static final int SIG = 0, TEXT = 1, TICK = 2, RECT = 3, OVAL = 4, SYM = 5;
+        /** For SYM: which fixture or piece of equipment (see Mep), and what is written on it. */
+        int sym;
+        String tag = "", size = "", note = "";
+        /** For SYM: label text height in page units. */
+        float th;
         int kind;
         String text = "";
         int color = 0xFFE53935;
@@ -323,10 +439,31 @@ final class Marks {
                     JSONArray p = new JSONArray();
                     for (int j = 0; j < s.n; j++) p.put(Math.round(s.pts[j] * 100f) / 100.0);
                     o.put("p", p);
+                } else if (it instanceof Run) {
+                    Run r = (Run) it;
+                    o.put("k", "run");
+                    o.put("rk", r.kind);
+                    o.put("sys", r.sys);
+                    o.put("sz", r.size);
+                    o.put("tg", r.tag);
+                    o.put("nt", r.note);
+                    o.put("w", r.w);
+                    o.put("th", r.th);
+                    JSONArray p = new JSONArray();
+                    for (int j = 0; j < r.n; j++) p.put(Math.round(r.pts[j] * 100f) / 100.0);
+                    o.put("p", p);
                 } else {
                     Stamp s = (Stamp) it;
                     o.put("k", s.kind == Stamp.SIG ? "sig" : s.kind == Stamp.TICK ? "tick"
-                            : s.kind == Stamp.RECT ? "rect" : s.kind == Stamp.OVAL ? "oval" : "text");
+                            : s.kind == Stamp.RECT ? "rect" : s.kind == Stamp.OVAL ? "oval"
+                            : s.kind == Stamp.SYM ? "sym" : "text");
+                    if (s.kind == Stamp.SYM) {
+                        o.put("sym", s.sym);
+                        o.put("tg", s.tag);
+                        o.put("sz", s.size);
+                        o.put("nt", s.note);
+                        o.put("th", s.th);
+                    }
                     o.put("t", s.text);
                     o.put("c", s.color);
                     o.put("b", s.boxed);
@@ -368,10 +505,30 @@ final class Marks {
                         s.add((float) p.getDouble(q), (float) p.getDouble(q + 1));
                     }
                     if (s.n >= 2) l.add(s);
+                } else if (k.equals("run")) {
+                    Run r = new Run();
+                    r.kind = o.optInt("rk", Run.PIPE);
+                    r.sys = o.optInt("sys", 0);
+                    r.size = o.optString("sz", "");
+                    r.tag = o.optString("tg", "");
+                    r.note = o.optString("nt", "");
+                    r.w = (float) o.optDouble("w", 2);
+                    r.th = (float) o.optDouble("th", 8);
+                    JSONArray p = o.getJSONArray("p");
+                    for (int q = 0; q + 1 < p.length(); q += 2) {
+                        r.add((float) p.getDouble(q), (float) p.getDouble(q + 1));
+                    }
+                    if (r.points() >= 2) l.add(r);
                 } else {
                     Stamp s = new Stamp();
                     s.kind = k.equals("sig") ? Stamp.SIG : k.equals("tick") ? Stamp.TICK
-                            : k.equals("rect") ? Stamp.RECT : k.equals("oval") ? Stamp.OVAL : Stamp.TEXT;
+                            : k.equals("rect") ? Stamp.RECT : k.equals("oval") ? Stamp.OVAL
+                            : k.equals("sym") ? Stamp.SYM : Stamp.TEXT;
+                    s.sym = o.optInt("sym", 0);
+                    s.tag = o.optString("tg", "");
+                    s.size = o.optString("sz", "");
+                    s.note = o.optString("nt", "");
+                    s.th = (float) o.optDouble("th", 8);
                     s.text = o.optString("t", "");
                     s.color = o.optInt("c", 0xFFE53935);
                     s.boxed = o.optBoolean("b", true);

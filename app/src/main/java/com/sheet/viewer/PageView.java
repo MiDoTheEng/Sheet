@@ -36,6 +36,12 @@ final class PageView extends View {
 
         /** The user double-tapped a text stamp: open it for editing. */
         void onEditStamp(Marks.Stamp s);
+
+        /** The user double-tapped a pipe, duct, fixture or piece of equipment. */
+        void onEditSite(Marks.Item it);
+
+        /** A point was added to or taken off the pipe/duct being drawn. */
+        void onDraftChanged(int points);
     }
 
     /** What the render thread needs to know about the view. */
@@ -44,10 +50,10 @@ final class PageView extends View {
         float scale, offX, offY, pageW, pageH, baseScale;
     }
 
-    static final int HAND = 0, PEN = 1, HI = 2, ERASER = 3;
+    static final int HAND = 0, PEN = 1, HI = 2, ERASER = 3, RUN = 4;
 
     private static final int G_NONE = 0, G_NAV = 1, G_DRAW = 2, G_ERASE = 3, G_MOVE = 4,
-            G_RESIZE = 5, G_DELETE = 6, G_PINCH = 7;
+            G_RESIZE = 5, G_DELETE = 6, G_PINCH = 7, G_RUN_MOVE = 8, G_RUN_DELETE = 9;
 
     int tool = HAND;
     int penColor = 0xFFE53935, hiColor = 0xFFFFEB3B;
@@ -73,6 +79,11 @@ final class PageView extends View {
     private ArrayList<Marks.Item> items;
     private Marks.Stroke cur;
     private Marks.Stamp selected;
+    /** The pipe or duct being drawn point by point, and a selected one. */
+    private Marks.Run draft, selRun;
+    private float downX, downY;
+    private long downT;
+    private final int touchSlop;
 
     private int gesture = G_NONE;
     private float lastX, lastY, lastFx, lastFy, grabDx, grabAspect;
@@ -108,6 +119,7 @@ final class PageView extends View {
         handleMark.setStrokeWidth(Ui.dp(c, 2));
         handleMark.setStrokeCap(Paint.Cap.ROUND);
         handleMark.setColor(0xFFFFFFFF);
+        touchSlop = android.view.ViewConfiguration.get(c).getScaledTouchSlop();
         handleR = Ui.dp(c, 13);
         hitR = Ui.dp(c, 24);
         penWidthPx = Ui.dp(c, 3.2f);
@@ -150,7 +162,25 @@ final class PageView extends View {
 
             @Override
             public boolean onDoubleTap(MotionEvent e) {
+                if (tool == RUN) return true; // taps add route points instead
                 Marks.Stamp hit = stampAt(e.getX(), e.getY());
+                if (hit != null && hit.kind == Marks.Stamp.SYM) {
+                    selected = hit;
+                    selRun = null;
+                    invalidate();
+                    if (host != null) host.onEditSite(hit);
+                    return true;
+                }
+                if (hit == null) {
+                    Marks.Run r = runAt(e.getX(), e.getY());
+                    if (r != null) {
+                        selRun = r;
+                        selected = null;
+                        invalidate();
+                        if (host != null) host.onEditSite(r);
+                        return true;
+                    }
+                }
                 if (hit != null && (hit.kind == Marks.Stamp.TEXT || hit.kind == Marks.Stamp.RECT
                         || hit.kind == Marks.Stamp.OVAL)) {
                     selected = hit;
@@ -165,9 +195,12 @@ final class PageView extends View {
 
             @Override
             public boolean onSingleTapConfirmed(MotionEvent e) {
+                if (tool == RUN) return true;
                 Marks.Stamp hit = stampAt(e.getX(), e.getY());
-                if (hit != selected) {
+                Marks.Run r = hit == null ? runAt(e.getX(), e.getY()) : null;
+                if (hit != selected || r != selRun) {
                     selected = hit;
+                    selRun = r;
                     invalidate();
                 }
                 return true;
@@ -224,6 +257,9 @@ final class PageView extends View {
         hasPage = true;
         items = marks.list(index);
         selected = null;
+        selRun = null;
+        draft = null;
+        if (tool == RUN) tool = HAND;
         cur = null;
         gesture = G_NONE;
         computeFit();
@@ -382,10 +418,35 @@ final class PageView extends View {
         c.translate(offX, offY);
         c.scale(scale, scale);
         if (items != null) {
-            for (int i = 0, n = items.size(); i < n; i++) drawItem(c, items.get(i));
+            int num = marks.notesBefore(pageIndex);
+            for (int i = 0, n = items.size(); i < n; i++) {
+                Marks.Item it = items.get(i);
+                drawItem(c, it, Marks.hasNote(it) ? ++num : 0);
+            }
         }
-        if (cur != null) drawItem(c, cur);
+        if (cur != null) drawItem(c, cur, 0);
+        if (draft != null) {
+            Mep.drawRun(c, draft, 0);
+            handle.setColor(draft.color());
+            float dr = Ui.dp(getContext(), 4.5f) / scale;
+            for (int i = 0; i + 1 < draft.n; i += 2) c.drawCircle(draft.pts[i], draft.pts[i + 1], dr, handle);
+        }
         c.restore();
+
+        if (selRun != null && selRun.points() >= 2) {
+            android.graphics.Path sp = new android.graphics.Path();
+            sp.moveTo(offX + selRun.pts[0] * scale, offY + selRun.pts[1] * scale);
+            for (int i = 2; i + 1 < selRun.n; i += 2) {
+                sp.lineTo(offX + selRun.pts[i] * scale, offY + selRun.pts[i + 1] * scale);
+            }
+            c.drawPath(sp, selLine);
+            float hx = offX + selRun.pts[0] * scale, hy = offY + selRun.pts[1] * scale;
+            handle.setColor(0xFFE53935);
+            c.drawCircle(hx, hy, handleR, handle);
+            float k = handleR * 0.4f;
+            c.drawLine(hx - k, hy - k, hx + k, hy + k, handleMark);
+            c.drawLine(hx - k, hy + k, hx + k, hy - k, handleMark);
+        }
 
         if (selected != null) {
             RectF r = screenRect(selected);
@@ -401,8 +462,10 @@ final class PageView extends View {
         }
     }
 
-    private void drawItem(Canvas c, Marks.Item it) {
-        if (it instanceof Marks.Stroke) {
+    private void drawItem(Canvas c, Marks.Item it, int num) {
+        if (it instanceof Marks.Run) {
+            Mep.drawRun(c, (Marks.Run) it, num);
+        } else if (it instanceof Marks.Stroke) {
             Marks.Stroke s = (Marks.Stroke) it;
             ink.setColor(s.color);
             ink.setStrokeWidth(s.width);
@@ -413,6 +476,8 @@ final class PageView extends View {
             if (st.kind == Marks.Stamp.SIG) {
                 Bitmap b = Sig.get(getContext());
                 if (b != null) c.drawBitmap(b, null, st.rect, bmpPaint);
+            } else if (st.kind == Marks.Stamp.SYM) {
+                Mep.drawSym(c, st, num);
             } else if (st.kind == Marks.Stamp.RECT || st.kind == Marks.Stamp.OVAL) {
                 ink.setXfermode(null);
                 ink.setColor(st.color);
@@ -460,6 +525,117 @@ final class PageView extends View {
         return null;
     }
 
+    private Marks.Run runAt(float x, float y) {
+        if (items == null) return null;
+        float px = (x - offX) / scale, py = (y - offY) / scale;
+        float tol = Ui.dp(getContext(), 14) / scale;
+        for (int i = items.size() - 1; i >= 0; i--) {
+            Marks.Item it = items.get(i);
+            if (it instanceof Marks.Run && ((Marks.Run) it).near(px, py, tol)) return (Marks.Run) it;
+        }
+        return null;
+    }
+
+    /** The current zoom: screen pixels per page unit. */
+    float viewScale() {
+        return scale;
+    }
+
+    // ---- drawing a pipe or duct route, point by point ----
+
+    void startRun(int kind, int sys) {
+        draft = new Marks.Run();
+        draft.kind = kind;
+        draft.sys = sys;
+        draft.w = Ui.dp(getContext(), kind == Marks.Run.DUCT ? 16 : 3.5f) / scale;
+        draft.th = Ui.dp(getContext(), 11) / scale;
+        tool = RUN;
+        selected = null;
+        selRun = null;
+        invalidate();
+    }
+
+    boolean drawingRun() {
+        return tool == RUN && draft != null;
+    }
+
+    int draftPoints() {
+        return draft == null ? 0 : draft.points();
+    }
+
+    void undoDraftPoint() {
+        if (draft == null) return;
+        draft.removeLast();
+        invalidate();
+        if (host != null) host.onDraftChanged(draft.points());
+    }
+
+    /** Ends the route; returns it if it has at least two points (it is then on the page). */
+    Marks.Run finishRun() {
+        Marks.Run r = draft;
+        draft = null;
+        tool = HAND;
+        if (r != null && r.points() >= 2) {
+            marks.add(pageIndex, r);
+            selRun = r;
+            invalidate();
+            if (host != null) host.onMarksChanged();
+            return r;
+        }
+        invalidate();
+        return null;
+    }
+
+    void cancelRun() {
+        draft = null;
+        if (tool == RUN) tool = HAND;
+        invalidate();
+    }
+
+    /** Adds a tapped point, snapping to existing pipe/duct points and to straight or 45 degree lines. */
+    private void addRunPoint(float x, float y) {
+        if (draft == null) return;
+        float px = Math.max(0, Math.min(pageW, (x - offX) / scale));
+        float py = Math.max(0, Math.min(pageH, (y - offY) / scale));
+        float snapR = Ui.dp(getContext(), 18) / scale;
+        boolean snapped = false;
+        float best = snapR;
+        if (items != null) {
+            for (Marks.Item it : items) {
+                if (!(it instanceof Marks.Run)) continue;
+                Marks.Run r = (Marks.Run) it;
+                for (int i = 0; i + 1 < r.n; i += 2) {
+                    float d = (float) Math.hypot(r.pts[i] - px, r.pts[i + 1] - py);
+                    if (d < best) {
+                        best = d;
+                        px = r.pts[i];
+                        py = r.pts[i + 1];
+                        snapped = true;
+                    }
+                }
+            }
+        }
+        if (!snapped && draft.points() >= 1) {
+            float lx = draft.pts[draft.n - 2], ly = draft.pts[draft.n - 1];
+            float dx = px - lx, dy = py - ly, len = (float) Math.hypot(dx, dy);
+            if (len > 0) {
+                double a = Math.atan2(dy, dx), step = Math.PI / 4;
+                double sa = Math.round(a / step) * step;
+                if (Math.abs(a - sa) < Math.toRadians(8)) {
+                    px = lx + (float) (Math.cos(sa) * len);
+                    py = ly + (float) (Math.sin(sa) * len);
+                }
+            }
+        }
+        if (draft.points() >= 1) {
+            float lx = draft.pts[draft.n - 2], ly = draft.pts[draft.n - 1];
+            if (Math.hypot(px - lx, py - ly) < Ui.dp(getContext(), 4) / scale) return;
+        }
+        draft.add(px, py);
+        invalidate();
+        if (host != null) host.onDraftChanged(draft.points());
+    }
+
     /** The page's shorter side, in page units (used to size shape lines). */
     float pageMin() {
         return Math.min(pageW, pageH);
@@ -492,12 +668,13 @@ final class PageView extends View {
     }
 
     boolean hasSelection() {
-        return selected != null;
+        return selected != null || selRun != null;
     }
 
     void deselect() {
-        if (selected != null) {
+        if (selected != null || selRun != null) {
             selected = null;
+            selRun = null;
             invalidate();
         }
     }
@@ -517,6 +694,7 @@ final class PageView extends View {
     /** Call after undo/redo or any change made from outside. */
     void refresh() {
         if (selected != null && (items == null || !items.contains(selected))) selected = null;
+        if (selRun != null && (items == null || !items.contains(selRun))) selRun = null;
         invalidate();
     }
 
@@ -532,6 +710,13 @@ final class PageView extends View {
                 return G_RESIZE;
             }
             if (r.contains(x, y)) return G_MOVE;
+        }
+        if (selRun != null && tool != RUN && selRun.points() >= 1) {
+            float hx = offX + selRun.pts[0] * scale, hy = offY + selRun.pts[1] * scale;
+            if (Math.hypot(x - hx, y - hy) <= hitR) return G_RUN_DELETE;
+            if (selRun.near((x - offX) / scale, (y - offY) / scale, Ui.dp(getContext(), 12) / scale)) {
+                return G_RUN_MOVE;
+            }
         }
         if (tool == PEN || tool == HI) return G_DRAW;
         if (tool == ERASER) return G_ERASE;
@@ -555,7 +740,9 @@ final class PageView extends View {
         boolean changed = false;
         for (int i = items.size() - 1; i >= 0; i--) {
             Marks.Item it = items.get(i);
-            if (it instanceof Marks.Stroke && ((Marks.Stroke) it).near(px, py, r)) {
+            if ((it instanceof Marks.Stroke && ((Marks.Stroke) it).near(px, py, r))
+                    || (it instanceof Marks.Run && ((Marks.Run) it).near(px, py, r))) {
+                if (it == selRun) selRun = null;
                 marks.remove(pageIndex, it);
                 changed = true;
             }
@@ -578,7 +765,13 @@ final class PageView extends View {
             if (anim != null) anim.cancel();
             moved = false;
             gesture = pickGesture(x, y);
-            if (gesture == G_DRAW || gesture == G_ERASE) selected = null;
+            if (gesture == G_DRAW || gesture == G_ERASE) {
+                selected = null;
+                selRun = null;
+            }
+            downX = x;
+            downY = y;
+            downT = e.getEventTime();
             if (gesture == G_DRAW) {
                 cur = new Marks.Stroke();
                 boolean hi = tool == HI;
@@ -599,7 +792,7 @@ final class PageView extends View {
                 det.onTouchEvent(cancel);
                 cancel.recycle();
             }
-            if ((gesture == G_MOVE || gesture == G_RESIZE) && moved && host != null) {
+            if ((gesture == G_MOVE || gesture == G_RESIZE || gesture == G_RUN_MOVE) && moved && host != null) {
                 host.onMarksChanged();
             }
             cur = null;
@@ -610,6 +803,37 @@ final class PageView extends View {
         switch (gesture) {
             case G_NAV:
                 det.onTouchEvent(e);
+                // Drawing a route: a quick tap (not a drag) adds a point.
+                if (tool == RUN && a == MotionEvent.ACTION_UP
+                        && Math.hypot(x - downX, y - downY) < touchSlop
+                        && e.getEventTime() - downT < 500) {
+                    addRunPoint(x, y);
+                }
+                break;
+            case G_RUN_MOVE:
+                if (a == MotionEvent.ACTION_MOVE && selRun != null) {
+                    if (!moved && Math.hypot(x - downX, y - downY) < touchSlop) break;
+                    selRun.offset((x - lastX) / scale, (y - lastY) / scale);
+                    lastX = x;
+                    lastY = y;
+                    moved = true;
+                    invalidate();
+                } else if (a == MotionEvent.ACTION_UP) {
+                    if (moved && host != null) host.onMarksChanged();
+                    else det.onTouchEvent(e);
+                }
+                if (!moved && a != MotionEvent.ACTION_UP) det.onTouchEvent(e);
+                break;
+            case G_RUN_DELETE:
+                if (a == MotionEvent.ACTION_UP && selRun != null && selRun.points() >= 1) {
+                    float hx = offX + selRun.pts[0] * scale, hy = offY + selRun.pts[1] * scale;
+                    if (Math.hypot(x - hx, y - hy) <= hitR * 1.5f) {
+                        marks.remove(pageIndex, selRun);
+                        selRun = null;
+                        invalidate();
+                        if (host != null) host.onMarksChanged();
+                    }
+                }
                 break;
             case G_DRAW:
                 if (cur == null) break;

@@ -10,7 +10,7 @@ import android.view.View;
 /** A toolbar button: a small line icon drawn in code with a label under it. */
 final class ToolButton extends View {
     static final int PAN = 0, PEN = 1, MARKER = 2, ERASER = 3, SIGN = 4, DATE = 5, STAMP = 6,
-            UNDO = 7, REDO = 8, TEXT = 9, TICK = 10, BARPOS = 11, SHAPES = 12;
+            UNDO = 7, REDO = 8, TEXT = 9, TICK = 10, BARPOS = 11, SHAPES = 12, MEP = 13;
 
     private final int kind;
     private final String label;
@@ -122,6 +122,15 @@ final class ToolButton extends View {
                 break;
             case TICK:
                 p.moveTo(4, 13); p.lineTo(9.5f, 19); p.lineTo(20, 5.5f);
+                break;
+            case MEP:
+                // a pipe with a valve on it
+                p.moveTo(2, 12); p.lineTo(7.5f, 12);
+                p.moveTo(16.5f, 12); p.lineTo(22, 12);
+                p.moveTo(7.5f, 7.5f); p.lineTo(16.5f, 16.5f); p.lineTo(16.5f, 7.5f);
+                p.lineTo(7.5f, 16.5f); p.close();
+                p.moveTo(12, 12); p.lineTo(12, 4.5f);
+                p.moveTo(9.5f, 4.5f); p.lineTo(14.5f, 4.5f);
                 break;
             case SHAPES:
                 p.addRect(3.5f, 3.5f, 14.5f, 14.5f, Path.Direction.CW);
