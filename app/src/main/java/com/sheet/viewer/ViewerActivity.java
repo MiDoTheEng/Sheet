@@ -393,9 +393,9 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
 
     @Override
     public void onDraftChanged(int n) {
-        runInfo.setText(n == 0 ? "Drag from where the pipe starts \u00B7 two fingers move the view"
-                : n == 1 ? "Drag on to the next corner \u2014 it snaps straight or to 45\u00B0"
-                : n + " points \u00B7 keep dragging, or tap Done");
+        runInfo.setText(n == 0 ? "Drag to draw \u00B7 two fingers move the view"
+                : n == 1 ? "Drag on \u2014 it snaps straight or to 45\u00B0"
+                : "From the end: continues \u00B7 elsewhere: new pipe");
         runDone.setAlpha(n >= 2 ? 1f : 0.4f);
     }
 
@@ -417,6 +417,10 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         texts.addView(runInfo);
         runBar.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
+        runSizeBtn = Ui.barButton(this, "Size \u25BE");
+        runSizeBtn.setTextSize(13);
+        runSizeBtn.setOnClickListener(v -> sizePreset());
+        runBar.addView(runSizeBtn, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 44)));
         TextView undoPt = Ui.barButton(this, "\u21B6");
         undoPt.setTextSize(22);
         undoPt.setOnClickListener(v -> page.undoDraftPoint());
@@ -443,10 +447,16 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
 
     private int palSel = -1;
     private int curKind, curSys, curSym;
-    private HorizontalScrollView palette;
+    /** The floating MEP panel, its list part, and whether it is folded to its title. */
+    private LinearLayout palette;
+    private android.widget.ScrollView palBody;
+    private TextView palFold;
     private final ArrayList<PalItem> palItems = new ArrayList<>();
+    /** Size given to every new pipe / duct, chosen once. */
+    private String pipePreset = "", ductPreset = "";
+    private TextView runSizeBtn;
 
-    /** One item in the MEP bar: a small drawing of it with its name. */
+    /** One item in the MEP panel: a small drawing of it with its full name. */
     private static final class PalItem extends View {
         final int kind, idx; // kind: 0 pipe, 1 duct, 2 fixture/equipment
         final String name;
@@ -469,9 +479,9 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
             if (on) {
                 p.setStyle(android.graphics.Paint.Style.FILL);
                 p.setColor(0x40FFB020);
-                c.drawRoundRect(3 * d, 3 * d, w - 3 * d, h - 3 * d, 10 * d, 10 * d, p);
+                c.drawRoundRect(2 * d, 2 * d, w - 2 * d, h - 2 * d, 10 * d, 10 * d, p);
             }
-            float iconTop = 7 * d, iconH = h - 27 * d, cy = iconTop + iconH / 2, cx = w / 2f;
+            float iconTop = 6 * d, iconH = h - 36 * d, cy = iconTop + iconH / 2, cx = w / 2f;
             if (kind == 0) {
                 p.setStyle(android.graphics.Paint.Style.STROKE);
                 p.setStrokeCap(android.graphics.Paint.Cap.ROUND);
@@ -480,11 +490,11 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
                 if (Mep.PIPE_DASH[idx]) {
                     p.setPathEffect(new android.graphics.DashPathEffect(new float[]{9 * d, 6 * d}, 0));
                 }
-                c.drawLine(11 * d, cy, w - 11 * d, cy, p);
+                c.drawLine(12 * d, cy, w - 12 * d, cy, p);
                 p.setPathEffect(null);
             } else if (kind == 1) {
                 int col = Mep.DUCT_COLOR[idx];
-                RectF r = new RectF(9 * d, cy - 8 * d, w - 9 * d, cy + 8 * d);
+                RectF r = new RectF(10 * d, cy - 7 * d, w - 10 * d, cy + 7 * d);
                 p.setStyle(android.graphics.Paint.Style.FILL);
                 p.setColor((col & 0x00FFFFFF) | 0x55000000);
                 c.drawRect(r, p);
@@ -493,7 +503,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
                 p.setColor(col);
                 c.drawRect(r, p);
             } else {
-                float a = Mep.SYM_ASPECT[idx], bh = iconH * 0.92f, bw = bh * a, maxW = w - 18 * d;
+                float a = Mep.SYM_ASPECT[idx], bh = iconH * 0.95f, bw = bh * a, maxW = w - 20 * d;
                 if (bw > maxW) {
                     bw = maxW;
                     bh = bw / a;
@@ -501,62 +511,142 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
                 Mep.drawSymbol(c, idx, new RectF(cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2),
                         Mep.symColor(idx));
             }
+            // The full name, on two lines if needed.
             p.setStyle(android.graphics.Paint.Style.FILL);
             p.setTextAlign(android.graphics.Paint.Align.CENTER);
-            p.setTextSize(10.5f * d);
+            p.setTextSize(11 * d);
             p.setTypeface(Typeface.DEFAULT_BOLD);
             p.setColor(on ? Ui.ACCENT : Ui.TEXT);
-            String s = name;
-            while (s.length() > 3 && p.measureText(s) > w - 4 * d) s = s.substring(0, s.length() - 2) + "\u2026";
-            c.drawText(s, cx, h - 9 * d, p);
+            float maxW = w - 4 * d;
+            String l1 = name, l2 = null;
+            if (p.measureText(name) > maxW && name.indexOf(' ') > 0) {
+                int mid = name.length() / 2, best = -1;
+                for (int i = 0; i < name.length(); i++) {
+                    if (name.charAt(i) == ' ' && (best < 0 || Math.abs(i - mid) < Math.abs(best - mid))) best = i;
+                }
+                l1 = name.substring(0, best);
+                l2 = name.substring(best + 1);
+            }
+            if (l2 == null) {
+                c.drawText(l1, cx, h - 12 * d, p);
+            } else {
+                c.drawText(l1, cx, h - 20 * d, p);
+                c.drawText(l2, cx, h - 7 * d, p);
+            }
         }
     }
 
-    private void buildPalette(FrameLayout mid) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
+    private void buildPalette(final FrameLayout mid) {
+        palette = new LinearLayout(this);
+        palette.setOrientation(LinearLayout.VERTICAL);
+        palette.setBackground(Ui.round(0xF5202228, Ui.dp(this, 16)));
+        palette.setElevation(Ui.dp(this, 10));
+        palette.setClickable(true); // touches on the panel don't reach the drawing
 
+        // Title bar: drag it to move the panel anywhere.
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        head.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 2), 0);
+        TextView title = Ui.label(this, "\u2807  MEP", 14, Ui.TEXT);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        head.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView list = Ui.barButton(this, "\u2630");
+        list.setOnClickListener(v -> siteList());
+        head.addView(list, new LinearLayout.LayoutParams(Ui.dp(this, 40), Ui.dp(this, 42)));
+        palFold = Ui.barButton(this, "\u2013");
+        palFold.setOnClickListener(v -> foldPalette(palBody.getVisibility() == View.VISIBLE));
+        head.addView(palFold, new LinearLayout.LayoutParams(Ui.dp(this, 40), Ui.dp(this, 42)));
         TextView close = Ui.barButton(this, "\u2715");
         close.setTextColor(Ui.DIM);
         close.setOnClickListener(v -> togglePalette());
-        row.addView(close, new LinearLayout.LayoutParams(Ui.dp(this, 44), ViewGroup.LayoutParams.MATCH_PARENT));
-        TextView list = Ui.barButton(this, "\u2630");
-        list.setOnClickListener(v -> siteList());
-        row.addView(list, new LinearLayout.LayoutParams(Ui.dp(this, 44), ViewGroup.LayoutParams.MATCH_PARENT));
+        head.addView(close, new LinearLayout.LayoutParams(Ui.dp(this, 40), Ui.dp(this, 42)));
+        palette.addView(head);
+        final float[] grab = new float[2];
+        head.setOnTouchListener((v, ev) -> {
+            switch (ev.getActionMasked()) {
+                case android.view.MotionEvent.ACTION_DOWN:
+                    grab[0] = ev.getRawX() - palette.getTranslationX();
+                    grab[1] = ev.getRawY() - palette.getTranslationY();
+                    return true;
+                case android.view.MotionEvent.ACTION_MOVE:
+                    placePalette(ev.getRawX() - grab[0], ev.getRawY() - grab[1]);
+                    return true;
+                case android.view.MotionEvent.ACTION_UP:
+                    Store.setPanelPos(this, palette.getTranslationX(), palette.getTranslationY());
+                    return true;
+            }
+            return false;
+        });
 
-        for (int i = 0; i < Mep.PIPE_NAMES.length; i++) addPal(row, 0, i, Mep.PIPE_ABBR[i]);
-        sep(row);
-        for (int i = 0; i < Mep.DUCT_NAMES.length; i++) addPal(row, 1, i, Mep.DUCT_ABBR[i] + " duct");
-        sep(row);
-        for (int i = 0; i < Mep.SYM_SHORT.length; i++) addPal(row, 2, i, Mep.SYM_SHORT[i]);
+        // The items, three to a row, in groups.
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(Ui.dp(this, 6), 0, Ui.dp(this, 6), Ui.dp(this, 8));
+        group(body, "Pipes", 0, Mep.PIPE_SHORT);
+        String[] ducts = new String[Mep.DUCT_NAMES.length];
+        for (int i = 0; i < ducts.length; i++) ducts[i] = Mep.DUCT_NAMES[i];
+        group(body, "Ducts", 1, ducts);
+        group(body, "Fixtures & equipment", 2, Mep.SYM_SHORT);
+        palBody = new android.widget.ScrollView(this);
+        palBody.setVerticalScrollBarEnabled(false);
+        palBody.addView(body);
+        palette.addView(palBody, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                Ui.dp(this, 300)));
 
-        palette = new HorizontalScrollView(this);
-        palette.setHorizontalScrollBarEnabled(false);
-        palette.setBackgroundColor(0xF2202228);
-        palette.addView(row, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 70));
-        lp.gravity = Gravity.BOTTOM;
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(Ui.dp(this, 252),
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.gravity = Gravity.TOP | Gravity.START;
         palette.setVisibility(View.GONE);
         mid.addView(palette, lp);
+        // Keep the panel on screen when the screen turns.
+        mid.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+            if (palette.getVisibility() == View.VISIBLE) {
+                placePalette(palette.getTranslationX(), palette.getTranslationY());
+            }
+        });
     }
 
-    private void addPal(LinearLayout row, int kind, int idx, String name) {
-        final PalItem it = new PalItem(this, kind, idx, name);
-        final int pos = palItems.size();
-        palItems.add(it);
-        it.setOnClickListener(v -> palClick(pos));
-        row.addView(it, new LinearLayout.LayoutParams(Ui.dp(this, 66), ViewGroup.LayoutParams.MATCH_PARENT));
+    private void group(LinearLayout body, String title, int kind, String[] names) {
+        TextView t = Ui.label(this, title.toUpperCase(Locale.ROOT), 11, Ui.DIM);
+        t.setTypeface(Typeface.DEFAULT_BOLD);
+        t.setLetterSpacing(0.08f);
+        t.setPadding(Ui.dp(this, 6), Ui.dp(this, 8), 0, Ui.dp(this, 2));
+        body.addView(t);
+        LinearLayout row = null;
+        for (int i = 0; i < names.length; i++) {
+            if (i % 3 == 0) {
+                row = new LinearLayout(this);
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                body.addView(row);
+            }
+            final PalItem it = new PalItem(this, kind, i, names[i]);
+            final int pos = palItems.size();
+            palItems.add(it);
+            it.setOnClickListener(v -> palClick(pos));
+            row.addView(it, new LinearLayout.LayoutParams(0, Ui.dp(this, 76), 1f));
+        }
+        // Fill the last row so items keep the same width.
+        if (row != null) {
+            for (int i = names.length % 3; i != 0 && i < 3; i++) {
+                row.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1f));
+            }
+        }
     }
 
-    private void sep(LinearLayout row) {
-        View s = new View(this);
-        s.setBackgroundColor(0x33FFFFFF);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(Ui.dp(this, 1), Ui.dp(this, 44));
-        lp.setMargins(Ui.dp(this, 4), 0, Ui.dp(this, 4), 0);
-        row.addView(s, lp);
+    /** Moves the panel, keeping it inside the drawing area. */
+    private void placePalette(float x, float y) {
+        View mid = (View) palette.getParent();
+        if (mid == null || mid.getWidth() == 0) return;
+        float maxX = Math.max(0, mid.getWidth() - palette.getWidth());
+        float maxY = Math.max(0, mid.getHeight() - Ui.dp(this, 46));
+        palette.setTranslationX(Math.max(0, Math.min(maxX, x)));
+        palette.setTranslationY(Math.max(0, Math.min(maxY, y)));
+    }
+
+    private void foldPalette(boolean fold) {
+        palBody.setVisibility(fold ? View.GONE : View.VISIBLE);
+        palFold.setText(fold ? "+" : "\u2013");
     }
 
     private void palSelect(int i) {
@@ -575,13 +665,57 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         if (palette.getVisibility() == View.VISIBLE) {
             exitSiteMode();
             palette.setVisibility(View.GONE);
-        } else {
-            palette.setVisibility(View.VISIBLE);
-            if (!Store.siteHintShown(this)) {
-                Ui.toast(this, "Pick a pipe, duct or fixture below. Pipes: drag to draw. Fixtures: tap to place.");
-                Store.setSiteHintShown(this);
-            }
+            return;
         }
+        palette.setVisibility(View.VISIBLE);
+        // List height: up to about half of the drawing area.
+        View mid = (View) palette.getParent();
+        int h = Math.min(Ui.dp(this, 330), Math.max(Ui.dp(this, 160), mid.getHeight() / 2));
+        palBody.getLayoutParams().height = h;
+        palBody.requestLayout();
+        final float[] pos = Store.panelPos(this);
+        palette.post(() -> {
+            if (pos != null) placePalette(pos[0], pos[1]);
+            else placePalette(mid.getWidth() - palette.getWidth() - Ui.dp(this, 10), Ui.dp(this, 78));
+        });
+        if (!Store.siteHintShown(this)) {
+            Ui.toast(this, "Pick an item. Pipes: drag to draw (start away from the last one for a separate pipe). Fixtures: tap to place.");
+            Store.setSiteHintShown(this);
+        }
+    }
+
+    /** Chooses the size every new pipe or duct gets. */
+    private void sizePreset() {
+        final boolean duct = curKind == Marks.Run.DUCT;
+        final String[] chips = duct ? Mep.DUCT_SIZES : Mep.PIPE_SIZES;
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int p = Ui.dp(this, 20);
+        box.setPadding(p, Ui.dp(this, 4), p, 0);
+        final EditText size = new EditText(this);
+        size.setSingleLine(true);
+        size.setText(duct ? ductPreset : pipePreset);
+        size.setHint(duct ? "e.g. 600x400" : "e.g. \u00D850");
+        HorizontalScrollView hs = new HorizontalScrollView(this);
+        hs.setHorizontalScrollBarEnabled(false);
+        hs.addView(chipRow(chips, -1, v -> {
+            size.setText(chips[v]);
+            size.setSelection(size.length());
+        }));
+        box.addView(hs);
+        box.addView(size);
+        new AlertDialog.Builder(this).setTitle(duct ? "Size for new ducts" : "Diameter for new pipes")
+                .setView(box)
+                .setPositiveButton("Use", (d, w) -> applyPreset(size.getText().toString().trim()))
+                .setNeutralButton("No size", (d, w) -> applyPreset(""))
+                .setNegativeButton("Cancel", null).show();
+    }
+
+    private void applyPreset(String s) {
+        if (curKind == Marks.Run.DUCT) ductPreset = s;
+        else pipePreset = s;
+        page.setRunSize(s);
+        runSizeBtn.setText(s.isEmpty() ? "Size \u25BE" : s + " \u25BE");
     }
 
     private void palClick(int i) {
@@ -629,6 +763,9 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         bHand.setOn(false);
         curKind = kind;
         curSys = sys;
+        String preset = kind == Marks.Run.DUCT ? ductPreset : pipePreset;
+        page.setRunSize(preset);
+        runSizeBtn.setText(preset.isEmpty() ? "Size \u25BE" : preset + " \u25BE");
         page.startRun(kind, sys);
         boolean duct = kind == Marks.Run.DUCT;
         runTitle.setText((duct ? Mep.DUCT_NAMES[sys] + " duct" : Mep.PIPE_NAMES[sys] + " pipe"));
@@ -642,12 +779,11 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
             Ui.toast(this, "Drag (or tap two points) to draw the run first");
             return;
         }
-        Marks.Run r = page.finishRun();
+        page.finishRun();
         marksChangedUi();
-        // Stay on the same system, ready for the next run.
+        // Stay on the same system, ready for the next run. Details: double-tap the pipe.
         page.startRun(curKind, curSys);
         onDraftChanged(0);
-        if (r != null) siteDialog(r, pageIndex); // straight away: size, tag, note
     }
 
     /** The ✕ on the run bar: clears the run being drawn, or leaves pipe drawing if it is empty. */

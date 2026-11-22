@@ -48,9 +48,12 @@ final class Mep {
             "Return grille", "Exhaust fan", "Thermostat", "Valve", "Pump", "Electrical panel (DB)",
             "Light"};
     /** Short names: shown in the MEP bar and under each placed item. */
-    static final String[] SYM_SHORT = {"WC", "Basin", "Sink", "Shower", "Floor drain", "Heater",
-            "Split AC", "FCU", "Diffuser", "Grille", "Exh. fan", "Thermostat", "Valve", "Pump",
-            "Panel", "Light"};
+    static final String[] SYM_SHORT = {"WC", "Wash basin", "Kitchen sink", "Shower", "Floor drain",
+            "Water heater", "Split AC", "FCU / AHU", "Diffuser", "Return grille", "Exhaust fan",
+            "Thermostat", "Valve", "Pump", "Panel (DB)", "Light"};
+    /** Pipe names short enough for the MEP panel. */
+    static final String[] PIPE_SHORT = {"Cold water", "Hot water", "Drainage", "Vent",
+            "CHW supply", "CHW return", "Condensate", "Fire fighting", "Gas", "Rain water"};
     /** 0 plumbing, 1 HVAC, 2 general, 3 electrical. */
     static final int[] SYM_GROUP = {0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 3, 3};
     static final int[] GROUP_COLOR = {0xFF1565C0, 0xFF00897B, 0xFF6D4C41, 0xFFEF6C00};

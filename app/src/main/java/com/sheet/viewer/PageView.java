@@ -560,12 +560,29 @@ final class PageView extends View {
 
     // ---- drawing a pipe or duct route, point by point ----
 
+    /** Size given to every new pipe/duct (chosen once in the bar), e.g. "\u00D850". */
+    private String runSize = "";
+
+    void setRunSize(String s) {
+        runSize = s == null ? "" : s;
+        if (draft != null) {
+            draft.size = runSize;
+            invalidate();
+        }
+    }
+
+    private Marks.Run newDraft(int kind, int sys) {
+        Marks.Run d = new Marks.Run();
+        d.kind = kind;
+        d.sys = sys;
+        d.size = runSize;
+        d.w = Ui.dp(getContext(), kind == Marks.Run.DUCT ? 16 : 3.5f) / scale;
+        d.th = Ui.dp(getContext(), 11) / scale;
+        return d;
+    }
+
     void startRun(int kind, int sys) {
-        draft = new Marks.Run();
-        draft.kind = kind;
-        draft.sys = sys;
-        draft.w = Ui.dp(getContext(), kind == Marks.Run.DUCT ? 16 : 3.5f) / scale;
-        draft.th = Ui.dp(getContext(), 11) / scale;
+        draft = newDraft(kind, sys);
         rubber = false;
         rubAddedStart = false;
         tool = RUN;
@@ -660,6 +677,27 @@ final class PageView extends View {
                         best = d;
                         px = r.pts[i];
                         py = r.pts[i + 1];
+                        snapped = true;
+                    }
+                }
+            }
+        }
+        if (!snapped && items != null) {
+            float bestS = snapR * 0.8f;
+            for (Marks.Item it : items) {
+                if (!(it instanceof Marks.Run)) continue;
+                Marks.Run r = (Marks.Run) it;
+                for (int i = 2; i + 1 < r.n; i += 2) {
+                    float ax = r.pts[i - 2], ay = r.pts[i - 1], bx = r.pts[i], by = r.pts[i + 1];
+                    float dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+                    if (len2 == 0) continue;
+                    float t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+                    float qx = ax + t * dx, qy = ay + t * dy;
+                    float d = (float) Math.hypot(qx - px, qy - py);
+                    if (d < bestS) {
+                        bestS = d;
+                        px = qx;
+                        py = qy;
                         snapped = true;
                     }
                 }
@@ -895,6 +933,20 @@ final class PageView extends View {
                     if (!rubber && Math.hypot(x - downX, y - downY) < touchSlop) break;
                     if (!rubber) {
                         rubber = true;
+                        if (draft.points() >= 1) {
+                            float lx = offX + draft.pts[draft.n - 2] * scale;
+                            float ly = offY + draft.pts[draft.n - 1] * scale;
+                            if (Math.hypot(downX - lx, downY - ly) > Ui.dp(getContext(), 30)) {
+                                // Started away from the pipe's end: that pipe is finished,
+                                // and this drag begins a separate one of the same system.
+                                Marks.Run prev = draft;
+                                if (prev.points() >= 2) {
+                                    marks.add(pageIndex, prev);
+                                    if (host != null) host.onMarksChanged();
+                                }
+                                draft = newDraft(prev.kind, prev.sys);
+                            }
+                        }
                         if (draft.points() == 0) {
                             // Finger down is where the pipe starts.
                             float[] s = snapRun(downX, downY);

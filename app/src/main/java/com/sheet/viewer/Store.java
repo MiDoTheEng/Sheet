@@ -170,12 +170,21 @@ final class Store {
         p(c).edit().putInt("shapeLevel", v).apply();
     }
 
+    static float[] panelPos(Context c) {
+        if (!p(c).contains("panelX")) return null;
+        return new float[]{p(c).getFloat("panelX", 0), p(c).getFloat("panelY", 0)};
+    }
+
+    static void setPanelPos(Context c, float x, float y) {
+        p(c).edit().putFloat("panelX", x).putFloat("panelY", y).apply();
+    }
+
     static boolean siteHintShown(Context c) {
-        return p(c).getBoolean("siteHint", false);
+        return p(c).getBoolean("siteHint2", false);
     }
 
     static void setSiteHintShown(Context c) {
-        p(c).edit().putBoolean("siteHint", true).apply();
+        p(c).edit().putBoolean("siteHint2", true).apply();
     }
 
     static int stampColor(Context c) {
