@@ -47,6 +47,10 @@ final class Mep {
             "Floor drain", "Water heater", "Split AC unit", "FCU / AHU", "Supply diffuser",
             "Return grille", "Exhaust fan", "Thermostat", "Valve", "Pump", "Electrical panel (DB)",
             "Light"};
+    /** Short names: shown in the MEP bar and under each placed item. */
+    static final String[] SYM_SHORT = {"WC", "Basin", "Sink", "Shower", "Floor drain", "Heater",
+            "Split AC", "FCU", "Diffuser", "Grille", "Exh. fan", "Thermostat", "Valve", "Pump",
+            "Panel", "Light"};
     /** 0 plumbing, 1 HVAC, 2 general, 3 electrical. */
     static final int[] SYM_GROUP = {0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 3, 3};
     static final int[] GROUP_COLOR = {0xFF1565C0, 0xFF00897B, 0xFF6D4C41, 0xFFEF6C00};
@@ -418,10 +422,11 @@ final class Mep {
         }
     }
 
-    /** The text written under a fixture or piece of equipment. */
+    /** The text written under a fixture or piece of equipment: its tag, or else its name. */
     static String symLabel(Marks.Stamp s) {
         StringBuilder sb = new StringBuilder();
         if (!s.tag.trim().isEmpty()) sb.append(s.tag.trim());
+        else sb.append(SYM_SHORT[Math.max(0, Math.min(SYM_SHORT.length - 1, s.sym))]);
         if (!s.size.trim().isEmpty()) {
             if (sb.length() > 0) sb.append("  ");
             sb.append(s.size.trim());

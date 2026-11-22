@@ -127,6 +127,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         busy.addView(pb, plp);
         busy.setVisibility(View.GONE);
         buildRunBar(mid);
+        buildPalette(mid);
         mid.addView(busy, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -198,7 +199,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         bStamp = tool(bar, ToolButton.STAMP, "Stamp", v -> stampMenu());
         tool(bar, ToolButton.TICK, "Tick", v -> tickMenu());
         tool(bar, ToolButton.SHAPES, "Shape", v -> shapeMenu());
-        tool(bar, ToolButton.MEP, "MEP", v -> mepMenu());
+        tool(bar, ToolButton.MEP, "MEP", v -> togglePalette());
         bUndo = tool(bar, ToolButton.UNDO, "Undo", v -> {
             int p = marks.undo();
             if (p == pageIndex) page.refresh();
@@ -243,6 +244,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
 
     private void setTool(int t) {
         if (page.drawingRun()) cancelRunMode();
+        palSelect(-1);
         page.tool = t;
         page.deselect();
         bHand.setOn(t == PageView.HAND);
@@ -391,9 +393,9 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
 
     @Override
     public void onDraftChanged(int n) {
-        runInfo.setText(n == 0 ? "Tap where the run starts. Drag to move around."
-                : n == 1 ? "Tap the next point \u2014 it snaps straight or to 45\u00B0"
-                : n + " points \u00B7 tap Done when the run is finished");
+        runInfo.setText(n == 0 ? "Drag from where the pipe starts \u00B7 two fingers move the view"
+                : n == 1 ? "Drag on to the next corner \u2014 it snaps straight or to 45\u00B0"
+                : n + " points \u00B7 keep dragging, or tap Done");
         runDone.setAlpha(n >= 2 ? 1f : 0.4f);
     }
 
@@ -425,7 +427,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         runBar.addView(runDone, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 44)));
         TextView cancel = Ui.barButton(this, "\u2715");
         cancel.setTextColor(Ui.DIM);
-        cancel.setOnClickListener(v -> cancelRunMode());
+        cancel.setOnClickListener(v -> clearOrExitRun());
         runBar.addView(cancel, new LinearLayout.LayoutParams(Ui.dp(this, 44), Ui.dp(this, 44)));
 
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
@@ -437,61 +439,196 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         mid.addView(runBar, lp);
     }
 
-    private void menuRow(LinearLayout box, String text, int color, final AlertDialog[] dlg,
-                         final Runnable action) {
-        TextView t = Ui.label(this, text, 16, Ui.TEXT);
-        t.setPadding(Ui.dp(this, 4), Ui.dp(this, 11), Ui.dp(this, 4), Ui.dp(this, 11));
-        if (color != 0) {
-            android.graphics.drawable.GradientDrawable d = Ui.dot(color, 0, 0);
-            int s = Ui.dp(this, 14);
-            d.setBounds(0, 0, s, s);
-            t.setCompoundDrawables(d, null, null, null);
-            t.setCompoundDrawablePadding(Ui.dp(this, 12));
+    // ---- the MEP bar: every pipe, duct and fixture, always one tap away ----
+
+    private int palSel = -1;
+    private int curKind, curSys, curSym;
+    private HorizontalScrollView palette;
+    private final ArrayList<PalItem> palItems = new ArrayList<>();
+
+    /** One item in the MEP bar: a small drawing of it with its name. */
+    private static final class PalItem extends View {
+        final int kind, idx; // kind: 0 pipe, 1 duct, 2 fixture/equipment
+        final String name;
+        boolean on;
+        private final android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+
+        PalItem(android.content.Context c, int kind, int idx, String name) {
+            super(c);
+            this.kind = kind;
+            this.idx = idx;
+            this.name = name;
+            setClickable(true);
         }
-        t.setOnClickListener(v -> {
-            if (dlg[0] != null) dlg[0].dismiss();
-            action.run();
-        });
-        box.addView(t);
+
+        @Override
+        protected void onDraw(android.graphics.Canvas c) {
+            float d = getResources().getDisplayMetrics().density;
+            int w = getWidth(), h = getHeight();
+            p.setPathEffect(null);
+            if (on) {
+                p.setStyle(android.graphics.Paint.Style.FILL);
+                p.setColor(0x40FFB020);
+                c.drawRoundRect(3 * d, 3 * d, w - 3 * d, h - 3 * d, 10 * d, 10 * d, p);
+            }
+            float iconTop = 7 * d, iconH = h - 27 * d, cy = iconTop + iconH / 2, cx = w / 2f;
+            if (kind == 0) {
+                p.setStyle(android.graphics.Paint.Style.STROKE);
+                p.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+                p.setStrokeWidth(4.5f * d);
+                p.setColor(Mep.PIPE_COLOR[idx]);
+                if (Mep.PIPE_DASH[idx]) {
+                    p.setPathEffect(new android.graphics.DashPathEffect(new float[]{9 * d, 6 * d}, 0));
+                }
+                c.drawLine(11 * d, cy, w - 11 * d, cy, p);
+                p.setPathEffect(null);
+            } else if (kind == 1) {
+                int col = Mep.DUCT_COLOR[idx];
+                RectF r = new RectF(9 * d, cy - 8 * d, w - 9 * d, cy + 8 * d);
+                p.setStyle(android.graphics.Paint.Style.FILL);
+                p.setColor((col & 0x00FFFFFF) | 0x55000000);
+                c.drawRect(r, p);
+                p.setStyle(android.graphics.Paint.Style.STROKE);
+                p.setStrokeWidth(1.8f * d);
+                p.setColor(col);
+                c.drawRect(r, p);
+            } else {
+                float a = Mep.SYM_ASPECT[idx], bh = iconH * 0.92f, bw = bh * a, maxW = w - 18 * d;
+                if (bw > maxW) {
+                    bw = maxW;
+                    bh = bw / a;
+                }
+                Mep.drawSymbol(c, idx, new RectF(cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2),
+                        Mep.symColor(idx));
+            }
+            p.setStyle(android.graphics.Paint.Style.FILL);
+            p.setTextAlign(android.graphics.Paint.Align.CENTER);
+            p.setTextSize(10.5f * d);
+            p.setTypeface(Typeface.DEFAULT_BOLD);
+            p.setColor(on ? Ui.ACCENT : Ui.TEXT);
+            String s = name;
+            while (s.length() > 3 && p.measureText(s) > w - 4 * d) s = s.substring(0, s.length() - 2) + "\u2026";
+            c.drawText(s, cx, h - 9 * d, p);
+        }
     }
 
-    private void mepMenu() {
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        int p = Ui.dp(this, 20);
-        box.setPadding(p, 0, p, Ui.dp(this, 8));
-        final AlertDialog[] dlg = new AlertDialog[1];
+    private void buildPalette(FrameLayout mid) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
 
-        int count = marks.siteItems().size();
-        if (count > 0) {
-            menuRow(box, "\u2630   List of site items (" + count + ")", 0, dlg, this::siteList);
+        TextView close = Ui.barButton(this, "\u2715");
+        close.setTextColor(Ui.DIM);
+        close.setOnClickListener(v -> togglePalette());
+        row.addView(close, new LinearLayout.LayoutParams(Ui.dp(this, 44), ViewGroup.LayoutParams.MATCH_PARENT));
+        TextView list = Ui.barButton(this, "\u2630");
+        list.setOnClickListener(v -> siteList());
+        row.addView(list, new LinearLayout.LayoutParams(Ui.dp(this, 44), ViewGroup.LayoutParams.MATCH_PARENT));
+
+        for (int i = 0; i < Mep.PIPE_NAMES.length; i++) addPal(row, 0, i, Mep.PIPE_ABBR[i]);
+        sep(row);
+        for (int i = 0; i < Mep.DUCT_NAMES.length; i++) addPal(row, 1, i, Mep.DUCT_ABBR[i] + " duct");
+        sep(row);
+        for (int i = 0; i < Mep.SYM_SHORT.length; i++) addPal(row, 2, i, Mep.SYM_SHORT[i]);
+
+        palette = new HorizontalScrollView(this);
+        palette.setHorizontalScrollBarEnabled(false);
+        palette.setBackgroundColor(0xF2202228);
+        palette.addView(row, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 70));
+        lp.gravity = Gravity.BOTTOM;
+        palette.setVisibility(View.GONE);
+        mid.addView(palette, lp);
+    }
+
+    private void addPal(LinearLayout row, int kind, int idx, String name) {
+        final PalItem it = new PalItem(this, kind, idx, name);
+        final int pos = palItems.size();
+        palItems.add(it);
+        it.setOnClickListener(v -> palClick(pos));
+        row.addView(it, new LinearLayout.LayoutParams(Ui.dp(this, 66), ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private void sep(LinearLayout row) {
+        View s = new View(this);
+        s.setBackgroundColor(0x33FFFFFF);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(Ui.dp(this, 1), Ui.dp(this, 44));
+        lp.setMargins(Ui.dp(this, 4), 0, Ui.dp(this, 4), 0);
+        row.addView(s, lp);
+    }
+
+    private void palSelect(int i) {
+        palSel = i;
+        for (int k = 0; k < palItems.size(); k++) {
+            PalItem it = palItems.get(k);
+            boolean on = k == i;
+            if (it.on != on) {
+                it.on = on;
+                it.invalidate();
+            }
         }
-        box.addView(dialogCaption("PIPES \u2014 then tap points along the route"));
-        for (int i = 0; i < Mep.PIPE_NAMES.length; i++) {
-            final int sys = i;
-            menuRow(box, Mep.PIPE_NAMES[i] + "   " + Mep.PIPE_ABBR[i], Mep.PIPE_COLOR[i], dlg,
-                    () -> startRun(Marks.Run.PIPE, sys));
+    }
+
+    private void togglePalette() {
+        if (palette.getVisibility() == View.VISIBLE) {
+            exitSiteMode();
+            palette.setVisibility(View.GONE);
+        } else {
+            palette.setVisibility(View.VISIBLE);
+            if (!Store.siteHintShown(this)) {
+                Ui.toast(this, "Pick a pipe, duct or fixture below. Pipes: drag to draw. Fixtures: tap to place.");
+                Store.setSiteHintShown(this);
+            }
         }
-        box.addView(dialogCaption("DUCTS"));
-        for (int i = 0; i < Mep.DUCT_NAMES.length; i++) {
-            final int sys = i;
-            menuRow(box, Mep.DUCT_NAMES[i] + "   " + Mep.DUCT_ABBR[i], Mep.DUCT_COLOR[i], dlg,
-                    () -> startRun(Marks.Run.DUCT, sys));
+    }
+
+    private void palClick(int i) {
+        if (i == palSel) { // tapping the chosen item again puts it down
+            exitSiteMode();
+            return;
         }
-        box.addView(dialogCaption("FIXTURES & EQUIPMENT"));
-        for (int i = 0; i < Mep.SYM_NAMES.length; i++) {
-            final int sym = i;
-            menuRow(box, Mep.SYM_NAMES[i], Mep.symColor(i), dlg, () -> placeSym(sym));
+        // A pipe being drawn is kept (if it has two points) before switching.
+        if (page.drawingRun()) {
+            if (page.draftPoints() >= 2) page.finishRun();
+            else page.cancelRun();
+            runBar.setVisibility(View.GONE);
+            marksChangedUi();
         }
-        android.widget.ScrollView sv = new android.widget.ScrollView(this);
-        sv.addView(box);
-        dlg[0] = new AlertDialog.Builder(this).setTitle("Site markup").setView(sv)
-                .setNegativeButton("Close", null).show();
+        PalItem it = palItems.get(i);
+        if (it.kind == 2) {
+            setTool(PageView.HAND);
+            bHand.setOn(false);
+            curSym = it.idx;
+            page.symbolMode();
+        } else {
+            startRun(it.kind == 1 ? Marks.Run.DUCT : Marks.Run.PIPE, it.idx);
+        }
+        palSelect(i);
+    }
+
+    private void exitSiteMode() {
+        if (page.drawingRun()) cancelRunMode();
+        setTool(PageView.HAND);
+    }
+
+    @Override
+    public Marks.Stamp makeSymbol() {
+        if (page.tool != PageView.SYMBOL) return null;
+        Marks.Stamp s = new Marks.Stamp();
+        s.kind = Marks.Stamp.SYM;
+        s.sym = curSym;
+        s.color = Mep.symColor(curSym);
+        s.th = Ui.dp(this, 11) / page.viewScale();
+        return s;
     }
 
     private void startRun(int kind, int sys) {
         setTool(PageView.HAND);
         bHand.setOn(false);
+        curKind = kind;
+        curSys = sys;
         page.startRun(kind, sys);
         boolean duct = kind == Marks.Run.DUCT;
         runTitle.setText((duct ? Mep.DUCT_NAMES[sys] + " duct" : Mep.PIPE_NAMES[sys] + " pipe"));
@@ -502,33 +639,31 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
 
     private void finishRunMode() {
         if (page.draftPoints() < 2) {
-            Ui.toast(this, "Tap at least two points along the route first");
+            Ui.toast(this, "Drag (or tap two points) to draw the run first");
             return;
         }
         Marks.Run r = page.finishRun();
-        runBar.setVisibility(View.GONE);
-        bHand.setOn(true);
         marksChangedUi();
+        // Stay on the same system, ready for the next run.
+        page.startRun(curKind, curSys);
+        onDraftChanged(0);
         if (r != null) siteDialog(r, pageIndex); // straight away: size, tag, note
+    }
+
+    /** The ✕ on the run bar: clears the run being drawn, or leaves pipe drawing if it is empty. */
+    private void clearOrExitRun() {
+        if (page.draftPoints() > 0) {
+            page.startRun(curKind, curSys);
+            onDraftChanged(0);
+        } else {
+            exitSiteMode();
+        }
     }
 
     private void cancelRunMode() {
         page.cancelRun();
         runBar.setVisibility(View.GONE);
         bHand.setOn(true);
-    }
-
-    private void placeSym(int sym) {
-        setTool(PageView.HAND);
-        Marks.Stamp s = new Marks.Stamp();
-        s.kind = Marks.Stamp.SYM;
-        s.sym = sym;
-        s.color = Mep.symColor(sym);
-        s.th = Ui.dp(this, 11) / page.viewScale();
-        float aspect = Mep.SYM_ASPECT[sym];
-        page.place(s, aspect, 0.12f * Math.max(1f, aspect * 0.65f), 0.15f);
-        bHand.setOn(true);
-        marksChangedUi();
     }
 
     /** Size, tag and note for a pipe, duct, fixture or piece of equipment. */
@@ -714,7 +849,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
 
     private void go(int index) {
         if (pageCount <= 0) return;
-        if (page.drawingRun()) cancelRunMode();
+        if (page.drawingRun()) exitSiteMode();
         index = Math.max(0, Math.min(pageCount - 1, index));
         pageIndex = index;
         pageLabel.setText((index + 1) + " / " + pageCount);
@@ -1345,7 +1480,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
     @Override
     public void onBackPressed() {
         if (page.drawingRun()) {
-            cancelRunMode();
+            clearOrExitRun();
             return;
         }
         if (page.hasSelection()) {
@@ -1354,6 +1489,10 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         }
         if (page.tool != PageView.HAND) {
             setTool(PageView.HAND);
+            return;
+        }
+        if (palette.getVisibility() == View.VISIBLE) {
+            palette.setVisibility(View.GONE);
             return;
         }
         super.onBackPressed();

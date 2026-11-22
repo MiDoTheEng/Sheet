@@ -170,6 +170,14 @@ final class Store {
         p(c).edit().putInt("shapeLevel", v).apply();
     }
 
+    static boolean siteHintShown(Context c) {
+        return p(c).getBoolean("siteHint", false);
+    }
+
+    static void setSiteHintShown(Context c) {
+        p(c).edit().putBoolean("siteHint", true).apply();
+    }
+
     static int stampColor(Context c) {
         return p(c).getInt("stampColor", 0xFFE53935);
     }

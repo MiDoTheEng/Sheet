@@ -42,6 +42,9 @@ final class PageView extends View {
 
         /** A point was added to or taken off the pipe/duct being drawn. */
         void onDraftChanged(int points);
+
+        /** A new fixture/equipment stamp of the kind chosen in the MEP bar (or null). */
+        Marks.Stamp makeSymbol();
     }
 
     /** What the render thread needs to know about the view. */
@@ -50,10 +53,11 @@ final class PageView extends View {
         float scale, offX, offY, pageW, pageH, baseScale;
     }
 
-    static final int HAND = 0, PEN = 1, HI = 2, ERASER = 3, RUN = 4;
+    static final int HAND = 0, PEN = 1, HI = 2, ERASER = 3, RUN = 4, SYMBOL = 5;
 
     private static final int G_NONE = 0, G_NAV = 1, G_DRAW = 2, G_ERASE = 3, G_MOVE = 4,
-            G_RESIZE = 5, G_DELETE = 6, G_PINCH = 7, G_RUN_MOVE = 8, G_RUN_DELETE = 9;
+            G_RESIZE = 5, G_DELETE = 6, G_PINCH = 7, G_RUN_MOVE = 8, G_RUN_DELETE = 9,
+            G_RUN_DRAG = 10;
 
     int tool = HAND;
     int penColor = 0xFFE53935, hiColor = 0xFFFFEB3B;
@@ -83,6 +87,11 @@ final class PageView extends View {
     private Marks.Run draft, selRun;
     private float downX, downY;
     private long downT;
+    /** Dragging out the next stretch of pipe: where the finger is now (page units). */
+    private boolean rubber, rubAddedStart;
+    private float rubX, rubY;
+    /** The last size used for each kind of fixture/equipment, so the next one matches. */
+    private final android.util.SparseArray<float[]> symSizes = new android.util.SparseArray<>();
     private final int touchSlop;
 
     private int gesture = G_NONE;
@@ -188,6 +197,7 @@ final class PageView extends View {
                     if (host != null) host.onEditStamp(hit);
                     return true;
                 }
+                if (tool == SYMBOL) return true;
                 float target = scale < fitScale * 1.5f ? fitScale * 3.5f : fitScale;
                 animateZoom(target, e.getX(), e.getY());
                 return true;
@@ -195,7 +205,7 @@ final class PageView extends View {
 
             @Override
             public boolean onSingleTapConfirmed(MotionEvent e) {
-                if (tool == RUN) return true;
+                if (tool == RUN || tool == SYMBOL) return true;
                 Marks.Stamp hit = stampAt(e.getX(), e.getY());
                 Marks.Run r = hit == null ? runAt(e.getX(), e.getY()) : null;
                 if (hit != selected || r != selRun) {
@@ -430,6 +440,13 @@ final class PageView extends View {
             handle.setColor(draft.color());
             float dr = Ui.dp(getContext(), 4.5f) / scale;
             for (int i = 0; i + 1 < draft.n; i += 2) c.drawCircle(draft.pts[i], draft.pts[i + 1], dr, handle);
+            if (rubber && draft.points() >= 1) {
+                ink.setXfermode(null);
+                ink.setColor((draft.color() & 0x00FFFFFF) | 0xB0000000);
+                ink.setStrokeWidth(draft.w);
+                c.drawLine(draft.pts[draft.n - 2], draft.pts[draft.n - 1], rubX, rubY, ink);
+                c.drawCircle(rubX, rubY, dr * 1.4f, handle);
+            }
         }
         c.restore();
 
@@ -549,6 +566,8 @@ final class PageView extends View {
         draft.sys = sys;
         draft.w = Ui.dp(getContext(), kind == Marks.Run.DUCT ? 16 : 3.5f) / scale;
         draft.th = Ui.dp(getContext(), 11) / scale;
+        rubber = false;
+        rubAddedStart = false;
         tool = RUN;
         selected = null;
         selRun = null;
@@ -588,6 +607,8 @@ final class PageView extends View {
 
     void cancelRun() {
         draft = null;
+        rubber = false;
+        rubAddedStart = false;
         if (tool == RUN) tool = HAND;
         invalidate();
     }
@@ -595,6 +616,35 @@ final class PageView extends View {
     /** Adds a tapped point, snapping to existing pipe/duct points and to straight or 45 degree lines. */
     private void addRunPoint(float x, float y) {
         if (draft == null) return;
+        float[] s = snapRun(x, y);
+        commitRunPoint(s[0], s[1]);
+    }
+
+    private void commitRunPoint(float px, float py) {
+        if (draft == null) return;
+        if (draft.points() >= 1) {
+            float lx = draft.pts[draft.n - 2], ly = draft.pts[draft.n - 1];
+            if (Math.hypot(px - lx, py - ly) < Ui.dp(getContext(), 4) / scale) return;
+        }
+        draft.add(px, py);
+        invalidate();
+        if (host != null) host.onDraftChanged(draft.points());
+    }
+
+    private void cancelRubber() {
+        if (rubber || rubAddedStart) {
+            if (rubAddedStart && draft != null) {
+                draft.removeLast();
+                if (host != null) host.onDraftChanged(draft.points());
+            }
+            rubber = false;
+            rubAddedStart = false;
+            invalidate();
+        }
+    }
+
+    /** A screen point turned into a page point, snapped to pipe ends and to straight/45 degree lines. */
+    private float[] snapRun(float x, float y) {
         float px = Math.max(0, Math.min(pageW, (x - offX) / scale));
         float py = Math.max(0, Math.min(pageH, (y - offY) / scale));
         float snapR = Ui.dp(getContext(), 18) / scale;
@@ -627,13 +677,49 @@ final class PageView extends View {
                 }
             }
         }
-        if (draft.points() >= 1) {
-            float lx = draft.pts[draft.n - 2], ly = draft.pts[draft.n - 1];
-            if (Math.hypot(px - lx, py - ly) < Ui.dp(getContext(), 4) / scale) return;
-        }
-        draft.add(px, py);
+        return new float[]{px, py};
+    }
+
+    // ---- placing fixtures/equipment like a stamp: every tap puts one down ----
+
+    void symbolMode() {
+        draft = null;
+        rubber = false;
+        tool = SYMBOL;
+        selRun = null;
         invalidate();
-        if (host != null) host.onDraftChanged(draft.points());
+    }
+
+    private void symbolTap(float x, float y) {
+        Marks.Stamp hit = stampAt(x, y);
+        if (hit != null) {
+            selected = hit;
+            selRun = null;
+            invalidate();
+            return;
+        }
+        Marks.Stamp st = host != null ? host.makeSymbol() : null;
+        if (st == null) return;
+        float aspect = Mep.SYM_ASPECT[Math.max(0, Math.min(Mep.SYM_ASPECT.length - 1, st.sym))];
+        float[] sz = symSizes.get(st.sym);
+        float w, h;
+        if (sz != null) {
+            w = sz[0];
+            h = sz[1];
+        } else {
+            float visW = Math.min(getWidth(), pageW * scale) / scale;
+            w = visW * 0.12f * Math.max(1f, aspect * 0.65f);
+            h = w / aspect;
+        }
+        float cx = (x - offX) / scale, cy = (y - offY) / scale;
+        if (w < pageW) cx = Math.max(w / 2f, Math.min(pageW - w / 2f, cx));
+        if (h < pageH) cy = Math.max(h / 2f, Math.min(pageH - h / 2f, cy));
+        st.rect.set(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f);
+        marks.add(pageIndex, st);
+        selected = st; // ready to resize straight away
+        selRun = null;
+        invalidate();
+        if (host != null) host.onMarksChanged();
     }
 
     /** The page's shorter side, in page units (used to size shape lines). */
@@ -718,6 +804,7 @@ final class PageView extends View {
                 return G_RUN_MOVE;
             }
         }
+        if (tool == RUN) return G_RUN_DRAG;
         if (tool == PEN || tool == HI) return G_DRAW;
         if (tool == ERASER) return G_ERASE;
         return G_NAV;
@@ -795,14 +882,51 @@ final class PageView extends View {
             if ((gesture == G_MOVE || gesture == G_RESIZE || gesture == G_RUN_MOVE) && moved && host != null) {
                 host.onMarksChanged();
             }
+            if (gesture == G_RUN_DRAG) cancelRubber();
             cur = null;
             gesture = G_PINCH;
             invalidate();
         }
 
         switch (gesture) {
+            case G_RUN_DRAG:
+                if (draft == null) break;
+                if (a == MotionEvent.ACTION_MOVE) {
+                    if (!rubber && Math.hypot(x - downX, y - downY) < touchSlop) break;
+                    if (!rubber) {
+                        rubber = true;
+                        if (draft.points() == 0) {
+                            // Finger down is where the pipe starts.
+                            float[] s = snapRun(downX, downY);
+                            draft.add(s[0], s[1]);
+                            rubAddedStart = true;
+                            if (host != null) host.onDraftChanged(draft.points());
+                        }
+                    }
+                    float[] s = snapRun(x, y);
+                    rubX = s[0];
+                    rubY = s[1];
+                    invalidate();
+                } else if (a == MotionEvent.ACTION_UP) {
+                    if (rubber) {
+                        rubber = false;
+                        commitRunPoint(rubX, rubY);
+                    } else {
+                        addRunPoint(x, y); // a tap also adds a point
+                    }
+                    rubAddedStart = false;
+                    invalidate();
+                } else if (a == MotionEvent.ACTION_CANCEL) {
+                    cancelRubber();
+                }
+                break;
             case G_NAV:
                 det.onTouchEvent(e);
+                if (tool == SYMBOL && a == MotionEvent.ACTION_UP
+                        && Math.hypot(x - downX, y - downY) < touchSlop
+                        && e.getEventTime() - downT < 500) {
+                    symbolTap(x, y);
+                }
                 // Drawing a route: a quick tap (not a drag) adds a point.
                 if (tool == RUN && a == MotionEvent.ACTION_UP
                         && Math.hypot(x - downX, y - downY) < touchSlop
@@ -887,6 +1011,9 @@ final class PageView extends View {
                     moved = true;
                     invalidate();
                 } else if (a == MotionEvent.ACTION_UP && moved && host != null) {
+                    if (selected != null && selected.kind == Marks.Stamp.SYM) {
+                        symSizes.put(selected.sym, new float[]{selected.rect.width(), selected.rect.height()});
+                    }
                     host.onMarksChanged();
                 }
                 break;
