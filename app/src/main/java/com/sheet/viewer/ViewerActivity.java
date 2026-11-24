@@ -43,7 +43,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
     private int pageCount, pageIndex;
     private boolean pendingSig; // place the signature right after it is imported
 
-    private TextView pageLabel, saveBtn, layersBtn, prevBtn, nextBtn;
+    private TextView pageLabel, saveBtn, layersBtn, prevBtn, nextBtn, mepBtn;
     private DxfDoc cad; // set when the file is a CAD drawing
     private LinearLayout runBar;
     private TextView runTitle, runInfo, runDone;
@@ -98,6 +98,15 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         nextBtn = Ui.barButton(this, "›");
         nextBtn.setOnClickListener(v -> go(pageIndex + 1));
         top.addView(nextBtn, barLp());
+
+        // MEP on its own in the top bar: one tap opens the site markup panel.
+        mepBtn = Ui.barButton(this, "MEP");
+        mepBtn.setOnClickListener(v -> togglePalette());
+        LinearLayout.LayoutParams mlp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 36));
+        mlp.setMargins(Ui.dp(this, 4), 0, Ui.dp(this, 4), 0);
+        top.addView(mepBtn, mlp);
+        styleMepBtn(false);
 
         layersBtn = Ui.barButton(this, "Layers");
         layersBtn.setOnClickListener(v -> layersDialog());
@@ -199,7 +208,6 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         bStamp = tool(bar, ToolButton.STAMP, "Stamp", v -> stampMenu());
         tool(bar, ToolButton.TICK, "Tick", v -> tickMenu());
         tool(bar, ToolButton.SHAPES, "Shape", v -> shapeMenu());
-        tool(bar, ToolButton.MEP, "MEP", v -> togglePalette());
         bUndo = tool(bar, ToolButton.UNDO, "Undo", v -> {
             int p = marks.undo();
             if (p == pageIndex) page.refresh();
@@ -661,13 +669,35 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         }
     }
 
+    /** The MEP button: outlined when the panel is closed, filled when it is open. */
+    private void styleMepBtn(boolean open) {
+        android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable();
+        g.setCornerRadius(Ui.dp(this, 18));
+        if (open) {
+            g.setColor(Ui.ACCENT);
+            mepBtn.setTextColor(0xFF15161A);
+        } else {
+            g.setColor(0x26FFB020);
+            g.setStroke(Ui.dp(this, 1.5f), Ui.ACCENT);
+            mepBtn.setTextColor(Ui.ACCENT);
+        }
+        mepBtn.setBackground(g);
+        mepBtn.setPadding(Ui.dp(this, 16), 0, Ui.dp(this, 16), 0);
+    }
+
+    private void hidePalette() {
+        palette.setVisibility(View.GONE);
+        styleMepBtn(false);
+    }
+
     private void togglePalette() {
         if (palette.getVisibility() == View.VISIBLE) {
             exitSiteMode();
-            palette.setVisibility(View.GONE);
+            hidePalette();
             return;
         }
         palette.setVisibility(View.VISIBLE);
+        styleMepBtn(true);
         // List height: up to about half of the drawing area.
         View mid = (View) palette.getParent();
         int h = Math.min(Ui.dp(this, 330), Math.max(Ui.dp(this, 160), mid.getHeight() / 2));
@@ -1628,7 +1658,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
             return;
         }
         if (palette.getVisibility() == View.VISIBLE) {
-            palette.setVisibility(View.GONE);
+            hidePalette();
             return;
         }
         super.onBackPressed();
