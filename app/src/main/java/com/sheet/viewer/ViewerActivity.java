@@ -461,7 +461,12 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
     private TextView palFold;
     private final ArrayList<PalItem> palItems = new ArrayList<>();
     /** Size given to every new pipe / duct, chosen once. */
-    private String pipePreset = "", ductPreset = "";
+    private final java.util.HashMap<String, String> presets = new java.util.HashMap<>();
+
+    private String presetFor(int kind, int sys) {
+        String s = presets.get(kind + "_" + sys);
+        return s == null ? "" : s;
+    }
     private TextView runSizeBtn;
 
     /** One item in the MEP panel: a small drawing of it with its full name. */
@@ -591,11 +596,13 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
         body.setPadding(Ui.dp(this, 6), 0, Ui.dp(this, 6), Ui.dp(this, 8));
-        group(body, "Pipes", 0, Mep.PIPE_SHORT);
+        String[] pipes = new String[Mep.PANEL_PIPES.length];
+        for (int i = 0; i < pipes.length; i++) pipes[i] = Mep.PIPE_SHORT[Mep.PANEL_PIPES[i]];
+        group(body, "Pipes", 0, pipes, Mep.PANEL_PIPES);
         String[] ducts = new String[Mep.DUCT_NAMES.length];
         for (int i = 0; i < ducts.length; i++) ducts[i] = Mep.DUCT_NAMES[i];
-        group(body, "Ducts", 1, ducts);
-        group(body, "Fixtures & equipment", 2, Mep.SYM_SHORT);
+        group(body, "Ducts", 1, ducts, null);
+        group(body, "Fixtures & equipment", 2, Mep.SYM_SHORT, null);
         palBody = new android.widget.ScrollView(this);
         palBody.setVerticalScrollBarEnabled(false);
         palBody.addView(body);
@@ -615,7 +622,8 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         });
     }
 
-    private void group(LinearLayout body, String title, int kind, String[] names) {
+    /** idx: the system/item number of each name (null: in order). */
+    private void group(LinearLayout body, String title, int kind, String[] names, int[] idx) {
         TextView t = Ui.label(this, title.toUpperCase(Locale.ROOT), 11, Ui.DIM);
         t.setTypeface(Typeface.DEFAULT_BOLD);
         t.setLetterSpacing(0.08f);
@@ -628,7 +636,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
                 row.setOrientation(LinearLayout.HORIZONTAL);
                 body.addView(row);
             }
-            final PalItem it = new PalItem(this, kind, i, names[i]);
+            final PalItem it = new PalItem(this, kind, idx != null ? idx[i] : i, names[i]);
             final int pos = palItems.size();
             palItems.add(it);
             it.setOnClickListener(v -> palClick(pos));
@@ -717,15 +725,15 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
     /** Chooses the size every new pipe or duct gets. */
     private void sizePreset() {
         final boolean duct = curKind == Marks.Run.DUCT;
-        final String[] chips = duct ? Mep.DUCT_SIZES : Mep.PIPE_SIZES;
+        final String[] chips = Mep.sizesFor(curKind, curSys);
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         int p = Ui.dp(this, 20);
         box.setPadding(p, Ui.dp(this, 4), p, 0);
         final EditText size = new EditText(this);
         size.setSingleLine(true);
-        size.setText(duct ? ductPreset : pipePreset);
-        size.setHint(duct ? "e.g. 600x400" : "e.g. \u00D850");
+        size.setText(presetFor(curKind, curSys));
+        size.setHint(duct ? "e.g. 600x400" : Mep.isCopper(curSys) ? "e.g. 1/4\"+1/2\"" : "e.g. \u00D850");
         HorizontalScrollView hs = new HorizontalScrollView(this);
         hs.setHorizontalScrollBarEnabled(false);
         hs.addView(chipRow(chips, -1, v -> {
@@ -734,7 +742,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         }));
         box.addView(hs);
         box.addView(size);
-        new AlertDialog.Builder(this).setTitle(duct ? "Size for new ducts" : "Diameter for new pipes")
+        new AlertDialog.Builder(this).setTitle(duct ? "Size for new ducts" : "Size for new pipes")
                 .setView(box)
                 .setPositiveButton("Use", (d, w) -> applyPreset(size.getText().toString().trim()))
                 .setNeutralButton("No size", (d, w) -> applyPreset(""))
@@ -742,8 +750,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
     }
 
     private void applyPreset(String s) {
-        if (curKind == Marks.Run.DUCT) ductPreset = s;
-        else pipePreset = s;
+        presets.put(curKind + "_" + curSys, s);
         page.setRunSize(s);
         runSizeBtn.setText(s.isEmpty() ? "Size \u25BE" : s + " \u25BE");
     }
@@ -793,7 +800,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         bHand.setOn(false);
         curKind = kind;
         curSys = sys;
-        String preset = kind == Marks.Run.DUCT ? ductPreset : pipePreset;
+        String preset = presetFor(kind, sys);
         page.setRunSize(preset);
         runSizeBtn.setText(preset.isEmpty() ? "Size \u25BE" : preset + " \u25BE");
         page.startRun(kind, sys);
@@ -842,32 +849,48 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         int p = Ui.dp(this, 20);
         box.setPadding(p, 0, p, 0);
 
-        final int[] sys = {isRun ? r.sys : 0};
+        final int[] sys = {isRun ? r.clampSys() : 0};
+        final HorizontalScrollView sizeChips = new HorizontalScrollView(this);
+        sizeChips.setHorizontalScrollBarEnabled(false);
+        final EditText size = new EditText(this);
         if (isRun) {
             box.addView(dialogCaption("System"));
-            String[] names = r.kind == Marks.Run.DUCT ? Mep.DUCT_NAMES : Mep.PIPE_NAMES;
+            final int[] order;
+            if (r.kind == Marks.Run.DUCT) {
+                order = new int[Mep.DUCT_NAMES.length];
+                for (int i = 0; i < order.length; i++) order[i] = i;
+            } else {
+                // The offered pipes, plus this pipe's own system if it is an older one (e.g. CHW).
+                boolean listed = false;
+                for (int v : Mep.PANEL_PIPES) listed |= v == sys[0];
+                order = listed ? Mep.PANEL_PIPES.clone()
+                        : java.util.Arrays.copyOf(Mep.PANEL_PIPES, Mep.PANEL_PIPES.length + 1);
+                if (!listed) order[order.length - 1] = sys[0];
+            }
+            String[] names = new String[order.length];
+            int selPos = 0;
+            for (int i = 0; i < order.length; i++) {
+                names[i] = r.kind == Marks.Run.DUCT ? Mep.DUCT_NAMES[order[i]] : Mep.PIPE_SHORT[order[i]];
+                if (order[i] == sys[0]) selPos = i;
+            }
             HorizontalScrollView hs = new HorizontalScrollView(this);
             hs.setHorizontalScrollBarEnabled(false);
-            hs.addView(chipRow(names, r.clampSys(), v -> sys[0] = v));
+            hs.addView(chipRow(names, selPos, v -> {
+                sys[0] = order[v];
+                fillSizeChips(sizeChips, size, Mep.sizesFor(r.kind, sys[0]));
+            }));
             box.addView(hs);
         }
 
-        box.addView(dialogCaption(isRun ? (r.kind == Marks.Run.DUCT ? "Size" : "Diameter")
+        box.addView(dialogCaption(isRun ? "Size"
                 : "Size / capacity"));
-        final EditText size = new EditText(this);
         size.setSingleLine(true);
         size.setText(isRun ? r.size : s.size);
-        size.setHint(isRun ? (r.kind == Marks.Run.DUCT ? "e.g. 600x400" : "e.g. \u00D850") : "e.g. 2 TR, 600x600");
+        size.setHint(isRun ? (r.kind == Marks.Run.DUCT ? "e.g. 600x400" : "e.g. \u00D850 or 1/4\"+1/2\"") : "e.g. 2 TR, 600x600");
         box.addView(size);
         if (isRun) {
-            final String[] chips = r.kind == Marks.Run.DUCT ? Mep.DUCT_SIZES : Mep.PIPE_SIZES;
-            HorizontalScrollView hs = new HorizontalScrollView(this);
-            hs.setHorizontalScrollBarEnabled(false);
-            hs.addView(chipRow(chips, -1, v -> {
-                size.setText(chips[v]);
-                size.setSelection(size.length());
-            }));
-            box.addView(hs);
+            fillSizeChips(sizeChips, size, Mep.sizesFor(r.kind, sys[0]));
+            box.addView(sizeChips);
         }
 
         box.addView(dialogCaption("Tag"));
@@ -911,6 +934,14 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
                     marksChangedUi();
                 })
                 .setNegativeButton("Cancel", null).show();
+    }
+
+    private void fillSizeChips(HorizontalScrollView holder, final EditText size, final String[] chips) {
+        holder.removeAllViews();
+        holder.addView(chipRow(chips, -1, v -> {
+            size.setText(chips[v]);
+            size.setSelection(size.length());
+        }));
     }
 
     /** Every pipe, duct, fixture and piece of equipment in the file, with its details. */

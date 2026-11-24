@@ -21,14 +21,35 @@ final class Mep {
     private Mep() {}
 
     // ---- pipes ----
+    // New systems are only ever added at the end, so drawings saved earlier keep their meaning.
     static final String[] PIPE_NAMES = {"Cold water", "Hot water", "Drainage", "Vent",
-            "Chilled water supply", "Chilled water return", "Condensate", "Fire fighting", "Gas",
-            "Rain water"};
-    static final String[] PIPE_ABBR = {"CW", "HW", "D", "V", "CHWS", "CHWR", "CD", "FF", "G", "RW"};
+            "Chilled water supply", "Chilled water return", "Condensate drain (AC)", "Fire fighting",
+            "Gas", "Rain water", "Copper refrigerant \u2013 Split AC", "Copper refrigerant \u2013 VRF"};
+    static final String[] PIPE_ABBR = {"CW", "HW", "D", "V", "CHWS", "CHWR", "CDP", "FF", "G", "RW",
+            "CU-SPLIT", "CU-VRF"};
     static final int[] PIPE_COLOR = {0xFF1E88E5, 0xFFE53935, 0xFF6D4C41, 0xFF43A047, 0xFF00897B,
-            0xFF00897B, 0xFF8E24AA, 0xFFC62828, 0xFFF9A825, 0xFF3949AB};
+            0xFF00897B, 0xFF8E24AA, 0xFFC62828, 0xFFF9A825, 0xFF3949AB, 0xFFC0702A, 0xFF9C4A16};
     static final boolean[] PIPE_DASH = {false, false, false, true, false, true, false, false, false,
-            false};
+            false, false, false};
+    /** Pipes offered in the MEP panel, in this order (chilled water is not offered). */
+    static final int[] PANEL_PIPES = {0, 1, 2, 3, 10, 11, 6, 7, 8, 9};
+    static final String[] COPPER_SIZES = {"1/4\"", "3/8\"", "1/2\"", "5/8\"", "3/4\"", "7/8\"",
+            "1-1/8\"", "1-3/8\"", "1/4\"+3/8\"", "1/4\"+1/2\"", "3/8\"+5/8\"", "3/8\"+3/4\"",
+            "1/2\"+7/8\""};
+    static final String[] CDP_SIZES = {"\u00D820", "\u00D825", "\u00D832", "\u00D840",
+            "\u00D850", "3/4\"", "1\""};
+
+    static boolean isCopper(int sys) {
+        return sys == 10 || sys == 11;
+    }
+
+    /** Quick size buttons that suit a pipe or duct system. */
+    static String[] sizesFor(int kind, int sys) {
+        if (kind == Marks.Run.DUCT) return DUCT_SIZES;
+        if (isCopper(sys)) return COPPER_SIZES;
+        if (sys == 6) return CDP_SIZES;
+        return PIPE_SIZES;
+    }
     static final String[] PIPE_SIZES = {"Ø15", "Ø20", "Ø25", "Ø32", "Ø40",
             "Ø50", "Ø65", "Ø80", "Ø100", "Ø150", "Ø200"};
 
@@ -53,7 +74,8 @@ final class Mep {
             "Thermostat", "Valve", "Pump", "Panel (DB)", "Light"};
     /** Pipe names short enough for the MEP panel. */
     static final String[] PIPE_SHORT = {"Cold water", "Hot water", "Drainage", "Vent",
-            "CHW supply", "CHW return", "Condensate", "Fire fighting", "Gas", "Rain water"};
+            "CHW supply", "CHW return", "CDP (AC drain)", "Fire fighting", "Gas", "Rain water",
+            "Copper Split AC", "Copper VRF"};
     /** 0 plumbing, 1 HVAC, 2 general, 3 electrical. */
     static final int[] SYM_GROUP = {0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 3, 3};
     static final int[] GROUP_COLOR = {0xFF1565C0, 0xFF00897B, 0xFF6D4C41, 0xFFEF6C00};
