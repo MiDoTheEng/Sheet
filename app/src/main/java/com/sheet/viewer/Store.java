@@ -170,6 +170,15 @@ final class Store {
         p(c).edit().putInt("shapeLevel", v).apply();
     }
 
+    static float[] toolPanelPos(Context c) {
+        if (!p(c).contains("toolX")) return null;
+        return new float[]{p(c).getFloat("toolX", 0), p(c).getFloat("toolY", 0)};
+    }
+
+    static void setToolPanelPos(Context c, float x, float y) {
+        p(c).edit().putFloat("toolX", x).putFloat("toolY", y).apply();
+    }
+
     static float[] panelPos(Context c) {
         if (!p(c).contains("panelX")) return null;
         return new float[]{p(c).getFloat("panelX", 0), p(c).getFloat("panelY", 0)};

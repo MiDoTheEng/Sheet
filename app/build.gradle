@@ -10,8 +10,8 @@ android {
         applicationId 'com.sheet.viewer'
         minSdk 26
         targetSdk 34
-        versionCode 12
-        versionName '1.11'
+        versionCode 13
+        versionName '1.12'
     }
 
     // A fixed key kept in the project, so every new build installs over the previous one

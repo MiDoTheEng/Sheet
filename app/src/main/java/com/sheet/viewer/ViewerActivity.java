@@ -137,6 +137,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         busy.setVisibility(View.GONE);
         buildRunBar(mid);
         buildPalette(mid);
+        buildToolPanel(mid);
         mid.addView(busy, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -188,26 +189,50 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
                     ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 64)));
         }
 
-        bHand = tool(bar, ToolButton.PAN, "Move", v -> setTool(PageView.HAND));
+        bHand = tool(bar, ToolButton.PAN, "Move", v -> {
+            setTool(PageView.HAND);
+            hideToolPanel();
+        });
         bPen = tool(bar, ToolButton.PEN, "Pen", v -> {
-            if (page.tool == PageView.PEN) penDialog();
-            else setTool(PageView.PEN);
+            if (page.tool == PageView.PEN && "pen".equals(curPanel)) hideToolPanel();
+            else {
+                setTool(PageView.PEN);
+                penDialog();
+            }
         });
         bHi = tool(bar, ToolButton.MARKER, "Marker", v -> {
-            if (page.tool == PageView.HI) penDialog();
-            else setTool(PageView.HI);
+            if (page.tool == PageView.HI && "pen".equals(curPanel)) hideToolPanel();
+            else {
+                setTool(PageView.HI);
+                penDialog();
+            }
         });
-        bEraser = tool(bar, ToolButton.ERASER, "Eraser", v -> setTool(PageView.ERASER));
-        tool(bar, ToolButton.TEXT, "Text", v -> textDialog());
+        bEraser = tool(bar, ToolButton.ERASER, "Eraser", v -> {
+            setTool(PageView.ERASER);
+            hideToolPanel();
+        });
+        tool(bar, ToolButton.TEXT, "Text", v -> {
+            if ("text".equals(curPanel)) hideToolPanel();
+            else textDialog();
+        });
         bSign = tool(bar, ToolButton.SIGN, "Sign", v -> sign());
         bSign.setOnLongClickListener(v -> {
             sigMenu();
             return true;
         });
         bDate = tool(bar, ToolButton.DATE, "Date", v -> placeDate());
-        bStamp = tool(bar, ToolButton.STAMP, "Stamp", v -> stampMenu());
-        tool(bar, ToolButton.TICK, "Tick", v -> tickMenu());
-        tool(bar, ToolButton.SHAPES, "Shape", v -> shapeMenu());
+        bStamp = tool(bar, ToolButton.STAMP, "Stamp", v -> {
+            if ("stamp".equals(curPanel)) hideToolPanel();
+            else stampMenu();
+        });
+        tool(bar, ToolButton.TICK, "Tick", v -> {
+            if ("tick".equals(curPanel)) hideToolPanel();
+            else tickMenu();
+        });
+        tool(bar, ToolButton.SHAPES, "Shape", v -> {
+            if ("shape".equals(curPanel)) hideToolPanel();
+            else shapeMenu();
+        });
         bUndo = tool(bar, ToolButton.UNDO, "Undo", v -> {
             int p = marks.undo();
             if (p == pageIndex) page.refresh();
@@ -677,6 +702,146 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         }
     }
 
+    // ---- floating panel for the bottom-bar tools (Pen, Marker, Text, Stamp, Tick, Shape) ----
+
+    private LinearLayout toolPanel, toolBody;
+    private TextView toolTitle;
+    private String curPanel; // which tool the panel is showing, or null
+
+    private void buildToolPanel(FrameLayout mid) {
+        toolPanel = new LinearLayout(this);
+        toolPanel.setOrientation(LinearLayout.VERTICAL);
+        toolPanel.setBackground(Ui.round(0xF5202228, Ui.dp(this, 16)));
+        toolPanel.setElevation(Ui.dp(this, 10));
+        toolPanel.setClickable(true);
+
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        head.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 2), 0);
+        toolTitle = Ui.label(this, "", 14, Ui.TEXT);
+        toolTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        head.addView(toolTitle, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView close = Ui.barButton(this, "\u2715");
+        close.setTextColor(Ui.DIM);
+        close.setOnClickListener(v -> hideToolPanel());
+        head.addView(close, new LinearLayout.LayoutParams(Ui.dp(this, 40), Ui.dp(this, 42)));
+        toolPanel.addView(head);
+        final float[] grab = new float[2];
+        head.setOnTouchListener((v, ev) -> {
+            switch (ev.getActionMasked()) {
+                case android.view.MotionEvent.ACTION_DOWN:
+                    grab[0] = ev.getRawX() - toolPanel.getTranslationX();
+                    grab[1] = ev.getRawY() - toolPanel.getTranslationY();
+                    return true;
+                case android.view.MotionEvent.ACTION_MOVE:
+                    placeToolPanel(ev.getRawX() - grab[0], ev.getRawY() - grab[1]);
+                    return true;
+                case android.view.MotionEvent.ACTION_UP:
+                    Store.setToolPanelPos(this, toolPanel.getTranslationX(), toolPanel.getTranslationY());
+                    return true;
+            }
+            return false;
+        });
+
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        sv.setVerticalScrollBarEnabled(false);
+        toolBody = new LinearLayout(this);
+        toolBody.setOrientation(LinearLayout.VERTICAL);
+        toolBody.setPadding(Ui.dp(this, 14), 0, Ui.dp(this, 14), Ui.dp(this, 12));
+        sv.addView(toolBody);
+        toolPanel.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(Ui.dp(this, 270),
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.gravity = Gravity.TOP | Gravity.START;
+        toolPanel.setVisibility(View.GONE);
+        mid.addView(toolPanel, lp);
+        mid.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+            if (toolPanel.getVisibility() == View.VISIBLE) {
+                // Keep it on screen, and not taller than the drawing area.
+                int maxH = (int) (mid.getHeight() * 0.7f);
+                if (toolPanel.getHeight() > maxH) {
+                    sv.getLayoutParams().height = maxH - Ui.dp(this, 42);
+                    sv.requestLayout();
+                }
+                placeToolPanel(toolPanel.getTranslationX(), toolPanel.getTranslationY());
+            }
+        });
+    }
+
+    private void placeToolPanel(float x, float y) {
+        View mid = (View) toolPanel.getParent();
+        if (mid == null || mid.getWidth() == 0) return;
+        float maxX = Math.max(0, mid.getWidth() - toolPanel.getWidth());
+        float maxY = Math.max(0, mid.getHeight() - Ui.dp(this, 46));
+        toolPanel.setTranslationX(Math.max(0, Math.min(maxX, x)));
+        toolPanel.setTranslationY(Math.max(0, Math.min(maxY, y)));
+    }
+
+    /** Shows the floating panel with this content (replacing whatever it showed). */
+    private void showToolPanel(String key, String title, View content) {
+        if (palette.getVisibility() == View.VISIBLE) {
+            exitSiteMode();
+            hidePalette();
+        }
+        boolean wasShown = toolPanel.getVisibility() == View.VISIBLE;
+        curPanel = key;
+        toolTitle.setText(title);
+        toolBody.removeAllViews();
+        toolBody.addView(content);
+        toolPanel.setVisibility(View.VISIBLE);
+        if (!wasShown) {
+            final float[] pos = Store.toolPanelPos(this);
+            final View mid = (View) toolPanel.getParent();
+            toolPanel.post(() -> {
+                if (pos != null) placeToolPanel(pos[0], pos[1]);
+                else placeToolPanel(mid.getWidth() - toolPanel.getWidth() - Ui.dp(this, 10),
+                        Ui.dp(this, 10));
+            });
+        }
+    }
+
+    private void hideToolPanel() {
+        if (toolPanel == null) return;
+        toolPanel.setVisibility(View.GONE);
+        curPanel = null;
+        View f = getCurrentFocus();
+        if (f != null) {
+            android.view.inputmethod.InputMethodManager im = (android.view.inputmethod.InputMethodManager)
+                    getSystemService(INPUT_METHOD_SERVICE);
+            if (im != null) im.hideSoftInputFromWindow(f.getWindowToken(), 0);
+        }
+    }
+
+    private LinearLayout panelBox() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        return box;
+    }
+
+    /** A tappable row in a floating panel. */
+    private TextView panelRow(LinearLayout box, String text, int color, View.OnClickListener l) {
+        TextView row = Ui.label(this, text, 16, color);
+        row.setTypeface(Typeface.DEFAULT_BOLD);
+        row.setPadding(Ui.dp(this, 8), Ui.dp(this, 12), Ui.dp(this, 8), Ui.dp(this, 12));
+        row.setBackground(Ui.round(0x14FFFFFF, Ui.dp(this, 10)));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = Ui.dp(this, 6);
+        box.addView(row, lp);
+        row.setOnClickListener(l);
+        return row;
+    }
+
+    private HorizontalScrollView scrollRow(View content) {
+        HorizontalScrollView hs = new HorizontalScrollView(this);
+        hs.setHorizontalScrollBarEnabled(false);
+        hs.addView(content);
+        return hs;
+    }
+
     /** The MEP button: outlined when the panel is closed, filled when it is open. */
     private void styleMepBtn(boolean open) {
         android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable();
@@ -704,6 +869,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
             hidePalette();
             return;
         }
+        hideToolPanel();
         palette.setVisibility(View.VISIBLE);
         styleMepBtn(true);
         // List height: up to about half of the drawing area.
@@ -1072,11 +1238,9 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
     // ---- pen settings ----
 
     private void penDialog() {
-        boolean hi = page.tool == PageView.HI;
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        int p = Ui.dp(this, 20);
-        box.setPadding(p, p, p, 0);
+        final boolean hi = page.tool == PageView.HI;
+        LinearLayout box = panelBox();
+        box.addView(dialogCaption("Color"));
         box.addView(colorRow(hi ? page.hiColor : page.penColor, c -> {
             if (page.tool == PageView.HI) page.hiColor = c;
             else {
@@ -1084,35 +1248,16 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
                 Store.setStampColor(this, c);
             }
         }, hi));
-
-        LinearLayout sizes = new LinearLayout(this);
-        sizes.setOrientation(LinearLayout.HORIZONTAL);
-        sizes.setGravity(Gravity.CENTER);
-        sizes.setPadding(0, Ui.dp(this, 16), 0, Ui.dp(this, 8));
-        float[] widths = hi ? new float[]{10, 16, 26} : new float[]{2, 3.2f, 5.5f};
-        String[] labels = {"Thin", "Medium", "Thick"};
-        for (int i = 0; i < 3; i++) {
-            final float wdp = widths[i];
-            TextView t = Ui.label(this, labels[i], 14, Ui.TEXT);
-            t.setGravity(Gravity.CENTER);
-            t.setPadding(Ui.dp(this, 14), Ui.dp(this, 10), Ui.dp(this, 14), Ui.dp(this, 10));
-            float cur = hi ? page.hiWidthPx : page.penWidthPx;
-            if (Math.abs(cur - Ui.dp(this, wdp)) < Ui.dp(this, 1)) {
-                t.setBackground(Ui.round(0x33FFB020, Ui.dp(this, 10)));
-                t.setTextColor(Ui.ACCENT);
-            }
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.rightMargin = Ui.dp(this, 8);
-            sizes.addView(t, lp);
-            t.setOnClickListener(v -> {
-                if (page.tool == PageView.HI) page.hiWidthPx = Ui.dp(this, wdp);
-                else page.penWidthPx = Ui.dp(this, wdp);
-            });
-        }
-        box.addView(sizes);
-        new AlertDialog.Builder(this).setTitle(hi ? "Marker" : "Pen").setView(box)
-                .setPositiveButton("Done", null).show();
+        final float[] widths = hi ? new float[]{10, 16, 26} : new float[]{2, 3.2f, 5.5f};
+        float cur = hi ? page.hiWidthPx : page.penWidthPx;
+        int sel = 1;
+        for (int i = 0; i < 3; i++) if (Math.abs(cur - Ui.dp(this, widths[i])) < Ui.dp(this, 1)) sel = i;
+        box.addView(dialogCaption("Thickness"));
+        box.addView(chipRow(new String[]{"Thin", "Medium", "Thick"}, sel, v -> {
+            if (page.tool == PageView.HI) page.hiWidthPx = Ui.dp(this, widths[v]);
+            else page.penWidthPx = Ui.dp(this, widths[v]);
+        }));
+        showToolPanel("pen", hi ? "Marker" : "Pen", box);
     }
 
     private interface ColorPick {
@@ -1223,39 +1368,28 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
     // ---- ticks ----
 
     private void tickMenu() {
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        int p = Ui.dp(this, 20);
-        box.setPadding(p, Ui.dp(this, 8), p, 0);
-
+        LinearLayout box = panelBox();
         final CheckBox sq = new CheckBox(this);
         sq.setText("Inside a square");
+        sq.setTextColor(Ui.TEXT);
         sq.setChecked(Store.tickBoxed(this));
+        sq.setOnCheckedChangeListener((b, on) -> Store.setTickBoxed(this, on));
         box.addView(sq);
-
-        final AlertDialog[] dlg = new AlertDialog[1];
-        String[] names = {"✓   Green tick", "✓   Red tick", "✕   Red cross"};
+        String[] names = {"\u2713   Green tick", "\u2713   Red tick", "\u2715   Red cross"};
         int[] colors = {Marks.StampArt.GREEN, Marks.StampArt.RED, Marks.StampArt.RED};
         for (int i = 0; i < 3; i++) {
             final int code = i + 1;
-            TextView row = Ui.label(this, names[i], 17, colors[i]);
-            row.setTypeface(Typeface.DEFAULT_BOLD);
-            row.setPadding(Ui.dp(this, 6), Ui.dp(this, 14), Ui.dp(this, 6), Ui.dp(this, 14));
-            box.addView(row);
-            row.setOnClickListener(v -> {
-                Store.setTickBoxed(this, sq.isChecked());
+            panelRow(box, names[i], colors[i], v -> {
                 Marks.Stamp s = new Marks.Stamp();
                 s.kind = Marks.Stamp.TICK;
                 s.tick = code;
                 s.boxed = sq.isChecked();
                 page.place(s, 1f, 0.1f, 0.12f);
                 setTool(PageView.HAND);
-                bHand.setOn(true);
-                if (dlg[0] != null) dlg[0].dismiss();
+                marksChangedUi();
             });
         }
-        dlg[0] = new AlertDialog.Builder(this).setTitle("Place a mark").setView(box)
-                .setNegativeButton("Cancel", null).show();
+        showToolPanel("tick", "Tick \u2014 tap to place", box);
     }
 
     // ---- shapes ----
@@ -1283,25 +1417,18 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
     }
 
     private void shapeMenu() {
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        int p = Ui.dp(this, 20);
-        box.setPadding(p, Ui.dp(this, 4), p, 0);
-
+        LinearLayout box = panelBox();
         final int[] level = {Store.shapeLevel(this)};
         box.addView(dialogCaption("Line thickness"));
-        box.addView(chipRow(THICK_NAMES, level[0], v -> level[0] = v));
-        box.addView(dialogCaption("Shape (uses the pen color)"));
-
-        final AlertDialog[] dlg = new AlertDialog[1];
+        box.addView(scrollRow(chipRow(THICK_NAMES, level[0], v -> {
+            level[0] = v;
+            Store.setShapeLevel(this, v);
+        })));
+        box.addView(dialogCaption("Tap a shape to place it (pen color)"));
         String[] kinds = {"\u25AD   Rectangle", "\u25A1   Square", "\u2B2D   Oval", "\u25CB   Circle"};
         for (int i = 0; i < kinds.length; i++) {
             final int w = i;
-            TextView row = Ui.label(this, kinds[i], 17, Ui.TEXT);
-            row.setPadding(Ui.dp(this, 6), Ui.dp(this, 13), Ui.dp(this, 6), Ui.dp(this, 13));
-            box.addView(row);
-            row.setOnClickListener(v -> {
-                Store.setShapeLevel(this, level[0]);
+            panelRow(box, kinds[i], Ui.TEXT, v -> {
                 Marks.Stamp s = new Marks.Stamp();
                 s.kind = (w <= 1) ? Marks.Stamp.RECT : Marks.Stamp.OVAL;
                 s.color = page.penColor;
@@ -1309,14 +1436,10 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
                 boolean even = (w == 1 || w == 3);
                 page.place(s, even ? 1f : 1.6f, even ? 0.18f : 0.3f, 0.35f);
                 setTool(PageView.HAND);
-                bHand.setOn(true);
-                if (dlg[0] != null) dlg[0].dismiss();
+                marksChangedUi();
             });
         }
-        android.widget.ScrollView sv = new android.widget.ScrollView(this);
-        sv.addView(box);
-        dlg[0] = new AlertDialog.Builder(this).setTitle("Place a shape").setView(sv)
-                .setNegativeButton("Cancel", null).show();
+        showToolPanel("shape", "Shape", box);
     }
 
     // ---- comments (free text) ----
@@ -1359,80 +1482,83 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
     }
 
     private void textDialog() {
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        int p = Ui.dp(this, 20);
-        box.setPadding(p, Ui.dp(this, 8), p, 0);
-
+        LinearLayout box = panelBox();
         final EditText text = new EditText(this);
-        text.setHint("Write your comment…");
+        text.setHint("Write your comment\u2026");
         text.setMinLines(1);
-        text.setMaxLines(6);
+        text.setMaxLines(5);
         box.addView(text);
 
         final int[] font = {0};
         box.addView(dialogCaption("Font"));
-        box.addView(chipRow(new String[]{"Simple", "Serif", "Typewriter", "Handwriting"}, 0,
-                v -> font[0] = v));
-
+        box.addView(scrollRow(chipRow(new String[]{"Simple", "Serif", "Typewriter", "Handwriting"}, 0,
+                v -> font[0] = v)));
         final int[] size = {1};
-        box.addView(dialogCaption("Starting size (drag the corner later for any size)"));
+        box.addView(dialogCaption("Size (drag the corner later for any size)"));
         box.addView(chipRow(new String[]{"Small", "Medium", "Large"}, 1, v -> size[0] = v));
-
         box.addView(dialogCaption("Color"));
         final int[] color = {Store.stampColor(this)};
         box.addView(colorRow(color[0], c -> color[0] = c, false));
-
         final CheckBox boxed = new CheckBox(this);
-        boxed.setText("Draw a frame around it");
-        boxed.setPadding(0, Ui.dp(this, 8), 0, 0);
+        boxed.setText("Frame around it");
+        boxed.setTextColor(Ui.TEXT);
         box.addView(boxed);
 
-        android.widget.ScrollView sv = new android.widget.ScrollView(this);
-        sv.addView(box);
-        new AlertDialog.Builder(this).setTitle("Comment").setView(sv)
-                .setPositiveButton("Place", (d, w) -> {
-                    String t = text.getText().toString().trim();
-                    if (t.isEmpty()) return;
-                    Marks.Stamp s = new Marks.Stamp();
-                    s.kind = Marks.Stamp.TEXT;
-                    s.text = t;
-                    s.color = color[0];
-                    s.font = font[0];
-                    s.boxed = boxed.isChecked();
-                    placeText(s, size[0] == 0 ? 0.22f : size[0] == 1 ? 0.4f : 0.6f);
-                })
-                .setNegativeButton("Cancel", null).show();
+        TextView place = Ui.label(this, "Place", 16, 0xFF15161A);
+        place.setTypeface(Typeface.DEFAULT_BOLD);
+        place.setGravity(Gravity.CENTER);
+        place.setBackground(Ui.round(Ui.ACCENT, Ui.dp(this, 12)));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 44));
+        lp.topMargin = Ui.dp(this, 8);
+        box.addView(place, lp);
+        place.setOnClickListener(v -> {
+            String t = text.getText().toString().trim();
+            if (t.isEmpty()) {
+                Ui.toast(this, "Write the comment first");
+                return;
+            }
+            Marks.Stamp s = new Marks.Stamp();
+            s.kind = Marks.Stamp.TEXT;
+            s.text = t;
+            s.color = color[0];
+            s.font = font[0];
+            s.boxed = boxed.isChecked();
+            hideToolPanel(); // out of the way, so the comment can be dragged into place
+            placeText(s, size[0] == 0 ? 0.22f : size[0] == 1 ? 0.4f : 0.6f);
+            marksChangedUi();
+        });
+        showToolPanel("text", "Comment", box);
+        text.requestFocus();
     }
 
     private void stampMenu() {
         final ArrayList<Store.SavedStamp> saved = Store.stamps(this);
-        String[] names = new String[saved.size() + 1];
-        names[0] = "+  New stamp…";
+        LinearLayout box = panelBox();
+        panelRow(box, "+  New stamp\u2026", Ui.ACCENT, v -> newStampDialog());
+        if (!saved.isEmpty()) box.addView(dialogCaption("Tap a stamp to place it"));
         for (int i = 0; i < saved.size(); i++) {
-            Store.SavedStamp st = saved.get(i);
-            names[i + 1] = st.text.replace('\n', ' ') + (st.date ? "  (+ date)" : "")
-                    + (st.tick == 1 ? "  ✓" : st.tick == 2 ? "  ✓" : st.tick == 3 ? "  ✕" : "");
+            final Store.SavedStamp st = saved.get(i);
+            String name = st.text.replace('\n', ' ') + (st.date ? "  (+ date)" : "")
+                    + (st.tick == 1 || st.tick == 2 ? "  \u2713" : st.tick == 3 ? "  \u2715" : "");
+            panelRow(box, name, st.color | 0xFF000000, v -> {
+                Marks.Stamp s = new Marks.Stamp();
+                s.kind = Marks.Stamp.TEXT;
+                s.text = st.date ? st.text + "\n" + today() : st.text;
+                s.color = st.color;
+                s.boxed = st.boxed;
+                s.tick = st.tick;
+                placeText(s, 0.42f);
+                marksChangedUi();
+            });
         }
-        AlertDialog.Builder b = new AlertDialog.Builder(this).setTitle("Stamps")
-                .setItems(names, (d, w) -> {
-                    if (w == 0) {
-                        newStampDialog();
-                        return;
-                    }
-                    Store.SavedStamp st = saved.get(w - 1);
-                    Marks.Stamp s = new Marks.Stamp();
-                    s.kind = Marks.Stamp.TEXT;
-                    s.text = st.date ? st.text + "\n" + today() : st.text;
-                    s.color = st.color;
-                    s.boxed = st.boxed;
-                    s.tick = st.tick;
-                    placeText(s, 0.42f);
-                });
         if (!saved.isEmpty()) {
-            b.setNeutralButton("Edit list", (d, w) -> editStamps(saved));
+            TextView edit = Ui.label(this, "Delete stamps\u2026", 13, Ui.DIM);
+            edit.setPadding(Ui.dp(this, 8), Ui.dp(this, 12), Ui.dp(this, 8), Ui.dp(this, 4));
+            edit.setOnClickListener(v -> editStamps(saved));
+            box.addView(edit);
         }
-        b.show();
+        showToolPanel("stamp", "Stamps", box);
     }
 
     private void editStamps(final ArrayList<Store.SavedStamp> saved) {
@@ -1443,6 +1569,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
                     saved.remove(w);
                     Store.saveStamps(this, saved);
                     Ui.toast(this, "Stamp deleted");
+                    if ("stamp".equals(curPanel)) stampMenu();
                 })
                 .setNegativeButton("Close", null).show();
     }
@@ -1506,6 +1633,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
                     s.boxed = boxed.isChecked();
                     s.tick = tick[0];
                     placeText(s, 0.42f);
+                    if ("stamp".equals(curPanel)) stampMenu();
                 })
                 .setNegativeButton("Cancel", null).show();
     }
@@ -1682,6 +1810,10 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         }
         if (page.hasSelection()) {
             page.deselect();
+            return;
+        }
+        if (toolPanel.getVisibility() == View.VISIBLE) {
+            hideToolPanel();
             return;
         }
         if (page.tool != PageView.HAND) {
