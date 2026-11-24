@@ -220,7 +220,10 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
             sigMenu();
             return true;
         });
-        bDate = tool(bar, ToolButton.DATE, "Date", v -> placeDate());
+        bDate = tool(bar, ToolButton.DATE, "Date", v -> {
+            if ("date".equals(curPanel)) hideToolPanel();
+            else dateMenu();
+        });
         bStamp = tool(bar, ToolButton.STAMP, "Stamp", v -> {
             if ("stamp".equals(curPanel)) hideToolPanel();
             else stampMenu();
@@ -1345,17 +1348,53 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
 
     // ---- date and text stamps ----
 
-    private static String today() {
-        return new SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH).format(new Date());
+    /** Date formats offered in the Date panel. */
+    private static final String[] DATE_FORMATS = {"dd MMM yyyy", "dd/MM/yyyy", "dd-MM-yyyy",
+            "dd.MM.yyyy", "yyyy-MM-dd", "MM/dd/yyyy", "d MMMM yyyy", "EEE, dd MMM yyyy",
+            "dd/MM/yy"};
+
+    private static String formatDate(int i) {
+        String f = DATE_FORMATS[Math.max(0, Math.min(DATE_FORMATS.length - 1, i))];
+        return new SimpleDateFormat(f, Locale.ENGLISH).format(new Date());
     }
 
-    private void placeDate() {
-        Marks.Stamp s = new Marks.Stamp();
-        s.kind = Marks.Stamp.TEXT;
-        s.text = today();
-        s.color = Store.stampColor(this);
-        s.boxed = true;
-        placeText(s, 0.42f);
+    /** Today's date in the format last chosen in the Date panel (also used by stamps). */
+    private String today() {
+        return formatDate(Store.dateFormat(this));
+    }
+
+    private void dateMenu() {
+        LinearLayout box = panelBox();
+        final CheckBox framed = new CheckBox(this);
+        framed.setText("Frame around it");
+        framed.setTextColor(Ui.TEXT);
+        framed.setChecked(Store.dateBoxed(this));
+        framed.setOnCheckedChangeListener((b, on) -> Store.setDateBoxed(this, on));
+        box.addView(framed);
+        box.addView(dialogCaption("Color"));
+        final int[] color = {Store.stampColor(this)};
+        box.addView(colorRow(color[0], c -> {
+            color[0] = c;
+            Store.setStampColor(this, c);
+        }, false));
+        box.addView(dialogCaption("Tap a format to place today's date"));
+        int chosen = Store.dateFormat(this);
+        for (int i = 0; i < DATE_FORMATS.length; i++) {
+            final int fi = i;
+            TextView row = panelRow(box, formatDate(i), i == chosen ? Ui.ACCENT : Ui.TEXT, v -> {
+                Store.setDateFormat(this, fi);
+                Marks.Stamp s = new Marks.Stamp();
+                s.kind = Marks.Stamp.TEXT;
+                s.text = formatDate(fi);
+                s.color = color[0];
+                s.boxed = framed.isChecked();
+                placeText(s, 0.42f);
+                marksChangedUi();
+                dateMenu(); // show the newly chosen format highlighted
+            });
+            row.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        }
+        showToolPanel("date", "Date", box);
     }
 
     private void placeText(Marks.Stamp s, float fracW) {

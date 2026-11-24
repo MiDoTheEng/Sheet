@@ -170,6 +170,22 @@ final class Store {
         p(c).edit().putInt("shapeLevel", v).apply();
     }
 
+    static int dateFormat(Context c) {
+        return p(c).getInt("dateFormat", 0);
+    }
+
+    static void setDateFormat(Context c, int i) {
+        p(c).edit().putInt("dateFormat", i).apply();
+    }
+
+    static boolean dateBoxed(Context c) {
+        return p(c).getBoolean("dateBoxed", true);
+    }
+
+    static void setDateBoxed(Context c, boolean v) {
+        p(c).edit().putBoolean("dateBoxed", v).apply();
+    }
+
     static float[] toolPanelPos(Context c) {
         if (!p(c).contains("toolX")) return null;
         return new float[]{p(c).getFloat("toolX", 0), p(c).getFloat("toolY", 0)};
