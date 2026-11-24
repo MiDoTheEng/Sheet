@@ -215,10 +215,9 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
             if ("text".equals(curPanel)) hideToolPanel();
             else textDialog();
         });
-        bSign = tool(bar, ToolButton.SIGN, "Sign", v -> sign());
-        bSign.setOnLongClickListener(v -> {
-            sigMenu();
-            return true;
+        bSign = tool(bar, ToolButton.SIGN, "Sign", v -> {
+            if ("sign".equals(curPanel)) hideToolPanel();
+            else signPanel();
         });
         bDate = tool(bar, ToolButton.DATE, "Date", v -> {
             if ("date".equals(curPanel)) hideToolPanel();
@@ -424,7 +423,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
 
     @Override
     public void onEditSite(Marks.Item it) {
-        siteDialog(it, pageIndex);
+        editPanel(it);
     }
 
     @Override
@@ -785,7 +784,11 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
 
     /** Shows the floating panel with this content (replacing whatever it showed). */
     private void showToolPanel(String key, String title, View content) {
-        if (palette.getVisibility() == View.VISIBLE) {
+        showToolPanel(key, title, content, false);
+    }
+
+    private void showToolPanel(String key, String title, View content, boolean keepMep) {
+        if (!keepMep && palette.getVisibility() == View.VISIBLE) {
             exitSiteMode();
             hidePalette();
         }
@@ -1140,13 +1143,246 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
                     Object[] row = items.get(w);
                     int pg = (Integer) row[0];
                     if (pg != pageIndex) go(pg);
-                    siteDialog((Marks.Item) row[1], pg);
+                    editPanel((Marks.Item) row[1]);
                 })
                 .setNegativeButton("Close", null).show();
     }
 
     @Override
     public void onEditStamp(final Marks.Stamp s) {
+        editPanel(s);
+    }
+
+    @Override
+    public void onTapItem(Marks.Item it) {
+        if (it == null) {
+            if ("edit".equals(curPanel)) hideToolPanel();
+            return;
+        }
+        editPanel(it);
+    }
+
+    // ---- editing anything already on the page (opened by tapping it) ----
+
+    private interface TextChange {
+        void changed(String s);
+    }
+
+    private EditText liveField(LinearLayout box, String value, String hint, boolean multi,
+                               final TextChange cb) {
+        final EditText e = new EditText(this);
+        e.setText(value);
+        e.setHint(hint);
+        if (multi) {
+            e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                    | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+            e.setMaxLines(5);
+        } else {
+            e.setSingleLine(true);
+        }
+        e.addTextChangedListener(new android.text.TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void onTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void afterTextChanged(android.text.Editable s) {
+                cb.changed(s.toString());
+            }
+        });
+        box.addView(e);
+        return e;
+    }
+
+    /** Applies a change to an item on the page straight away. */
+    private void changed(Marks.Item it) {
+        if (it instanceof Marks.Stamp && ((Marks.Stamp) it).kind == Marks.Stamp.TEXT) {
+            page.stampReshaped((Marks.Stamp) it);
+        } else {
+            page.refresh();
+        }
+        marksChangedUi();
+    }
+
+    private void editPanel(final Marks.Item it) {
+        LinearLayout box = panelBox();
+        String title = "Edit";
+        boolean site = Marks.isSite(it);
+        if (site) {
+            title = siteEditor(box, it);
+        } else if (it instanceof Marks.Stamp) {
+            final Marks.Stamp s = (Marks.Stamp) it;
+            switch (s.kind) {
+                case Marks.Stamp.TEXT:
+                    title = s.dfmt >= 0 ? "Date" : "Text";
+                    textEditor(box, s);
+                    break;
+                case Marks.Stamp.TICK: {
+                    title = "Tick";
+                    box.addView(dialogCaption("Mark"));
+                    box.addView(chipRow(new String[]{"\u2713 Green", "\u2713 Red", "\u2715 Red"},
+                            Math.max(0, s.tick - 1), v -> {
+                                s.tick = v + 1;
+                                changed(s);
+                            }));
+                    final CheckBox sq = new CheckBox(this);
+                    sq.setText("Inside a square");
+                    sq.setTextColor(Ui.TEXT);
+                    sq.setChecked(s.boxed);
+                    sq.setOnCheckedChangeListener((b, on) -> {
+                        s.boxed = on;
+                        page.stampReshaped(s);
+                    });
+                    box.addView(sq);
+                    break;
+                }
+                case Marks.Stamp.RECT:
+                case Marks.Stamp.OVAL:
+                    title = s.kind == Marks.Stamp.RECT ? "Rectangle" : "Oval";
+                    box.addView(dialogCaption("Color"));
+                    box.addView(colorRow(s.color, c -> {
+                        s.color = c;
+                        changed(s);
+                    }, false));
+                    box.addView(dialogCaption("Line thickness"));
+                    box.addView(scrollRow(chipRow(THICK_NAMES, levelOf(s), v -> {
+                        s.lw = thickness(v);
+                        Store.setShapeLevel(this, v);
+                        changed(s);
+                    })));
+                    box.addView(dialogCaption("Drag the orange corner to change width and height."));
+                    break;
+                case Marks.Stamp.SIG:
+                    title = "Signature";
+                    box.addView(dialogCaption("Drag to move, orange corner to resize."));
+                    panelRow(box, "Replace signature image\u2026", Ui.TEXT, v -> pickSig());
+                    break;
+            }
+        }
+        TextView del = panelRow(box, "\u2715  Delete", 0xFFE57373, v -> {
+            int pg = marks.pageOf(it);
+            if (pg >= 0) marks.remove(pg, it);
+            page.refresh();
+            marksChangedUi();
+            hideToolPanel();
+        });
+        ((LinearLayout.LayoutParams) del.getLayoutParams()).topMargin = Ui.dp(this, 14);
+        showToolPanel("edit", title, box, site);
+    }
+
+    private void textEditor(LinearLayout box, final Marks.Stamp s) {
+        if (s.dfmt >= 0) {
+            box.addView(dialogCaption("Format"));
+            for (int i = 0; i < DATE_FORMATS.length; i++) {
+                final int fi = i;
+                TextView row = panelRow(box, formatDate(i, s.when), i == s.dfmt ? Ui.ACCENT : Ui.TEXT, v -> {
+                    s.dfmt = fi;
+                    s.text = formatDate(fi, s.when);
+                    changed(s);
+                    editPanel(s);
+                });
+                row.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+            }
+        } else {
+            box.addView(dialogCaption("Text"));
+            liveField(box, s.text, "Text", true, t -> {
+                if (t.trim().isEmpty()) return;
+                s.text = t.trim();
+                changed(s);
+            });
+            box.addView(dialogCaption("Font"));
+            box.addView(scrollRow(chipRow(new String[]{"Simple", "Serif", "Typewriter", "Handwriting"},
+                    s.font, v -> {
+                        s.font = v;
+                        changed(s);
+                    })));
+            box.addView(dialogCaption("Mark beside the text"));
+            box.addView(scrollRow(chipRow(new String[]{"None", "\u2713 Green", "\u2713 Red", "\u2715 Red"},
+                    s.tick, v -> {
+                        s.tick = v;
+                        changed(s);
+                    })));
+        }
+        box.addView(dialogCaption("Color"));
+        box.addView(colorRow(s.color, c -> {
+            s.color = c;
+            changed(s);
+        }, false));
+        final CheckBox framed = new CheckBox(this);
+        framed.setText("Frame around it");
+        framed.setTextColor(Ui.TEXT);
+        framed.setChecked(s.boxed);
+        framed.setOnCheckedChangeListener((b, on) -> {
+            s.boxed = on;
+            changed(s);
+        });
+        box.addView(framed);
+    }
+
+    /** Fields for a pipe, duct, fixture or piece of equipment. Returns the panel title. */
+    private String siteEditor(LinearLayout box, final Marks.Item it) {
+        final boolean isRun = it instanceof Marks.Run;
+        final Marks.Run r = isRun ? (Marks.Run) it : null;
+        final Marks.Stamp s = isRun ? null : (Marks.Stamp) it;
+        final HorizontalScrollView sizeChips = new HorizontalScrollView(this);
+        sizeChips.setHorizontalScrollBarEnabled(false);
+        final EditText[] sizeField = new EditText[1];
+        if (isRun) {
+            final int[] order;
+            if (r.kind == Marks.Run.DUCT) {
+                order = new int[Mep.DUCT_NAMES.length];
+                for (int i = 0; i < order.length; i++) order[i] = i;
+            } else {
+                int cur = r.clampSys();
+                boolean listed = false;
+                for (int v : Mep.PANEL_PIPES) listed |= v == cur;
+                order = listed ? Mep.PANEL_PIPES.clone()
+                        : java.util.Arrays.copyOf(Mep.PANEL_PIPES, Mep.PANEL_PIPES.length + 1);
+                if (!listed) order[order.length - 1] = cur;
+            }
+            String[] names = new String[order.length];
+            int selPos = 0;
+            for (int i = 0; i < order.length; i++) {
+                names[i] = r.kind == Marks.Run.DUCT ? Mep.DUCT_NAMES[order[i]] : Mep.PIPE_SHORT[order[i]];
+                if (order[i] == r.clampSys()) selPos = i;
+            }
+            box.addView(dialogCaption("System"));
+            box.addView(scrollRow(chipRow(names, selPos, v -> {
+                r.sys = order[v];
+                changed(r);
+                fillSizeChips(sizeChips, sizeField[0], Mep.sizesFor(r.kind, r.sys));
+            })));
+        }
+        box.addView(dialogCaption("Size"));
+        sizeField[0] = liveField(box, isRun ? r.size : s.size,
+                isRun ? (r.kind == Marks.Run.DUCT ? "e.g. 600x400" : "e.g. \u00D850 or 1/4\"+1/2\"")
+                        : "e.g. 2 TR, 600x600", false, t -> {
+                    if (isRun) r.size = t.trim();
+                    else s.size = t.trim();
+                    changed(it);
+                });
+        if (isRun) {
+            fillSizeChips(sizeChips, sizeField[0], Mep.sizesFor(r.kind, r.sys));
+            box.addView(sizeChips);
+        }
+        box.addView(dialogCaption("Tag"));
+        liveField(box, isRun ? r.tag : s.tag, isRun ? "e.g. P-12" : "e.g. FCU-01", false, t -> {
+            if (isRun) r.tag = t.trim();
+            else s.tag = t.trim();
+            changed(it);
+        });
+        box.addView(dialogCaption("Note"));
+        liveField(box, isRun ? r.note : s.note, "e.g. runs above false ceiling", true, t -> {
+            if (isRun) r.note = t.trim();
+            else s.note = t.trim();
+            changed(it);
+        });
+        return isRun ? r.describe()
+                : Mep.SYM_NAMES[Math.max(0, Math.min(Mep.SYM_NAMES.length - 1, s.sym))];
+    }
+
+    private void onEditStampOld(final Marks.Stamp s) {
         if (s.kind == Marks.Stamp.RECT || s.kind == Marks.Stamp.OVAL) {
             LinearLayout box = new LinearLayout(this);
             box.setOrientation(LinearLayout.VERTICAL);
@@ -1300,13 +1536,41 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
 
     // ---- signature ----
 
-    private void sign() {
-        if (Sig.get(this) == null) {
-            pendingSig = true;
-            pickSig();
-            return;
+    /** The Sign panel: the saved signature, place it, replace or remove it. */
+    private void signPanel() {
+        LinearLayout box = panelBox();
+        Bitmap b = Sig.get(this);
+        if (b == null) {
+            box.addView(dialogCaption("No signature saved yet. Pick a photo of it; you can crop it next."));
+            panelRow(box, "Choose signature image\u2026", Ui.ACCENT, v -> {
+                pendingSig = true;
+                pickSig();
+            });
+        } else {
+            android.widget.ImageView iv = new android.widget.ImageView(this);
+            iv.setImageBitmap(b);
+            iv.setAdjustViewBounds(true);
+            iv.setMaxHeight(Ui.dp(this, 90));
+            iv.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+            iv.setBackground(Ui.round(0xFFFFFFFF, Ui.dp(this, 10)));
+            int ip = Ui.dp(this, 8);
+            iv.setPadding(ip, ip, ip, ip);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.topMargin = Ui.dp(this, 4);
+            box.addView(iv, lp);
+            panelRow(box, "\u270D  Place signature", Ui.ACCENT, v -> {
+                placeSig();
+                marksChangedUi();
+            });
+            panelRow(box, "Replace image\u2026", Ui.TEXT, v -> pickSig());
+            panelRow(box, "Remove saved signature", 0xFFE57373, v -> {
+                Sig.remove(this);
+                Ui.toast(this, "Signature removed");
+                signPanel();
+            });
         }
-        placeSig();
+        showToolPanel("sign", "Signature", box);
     }
 
     private void placeSig() {
@@ -1354,8 +1618,12 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
             "dd/MM/yy"};
 
     private static String formatDate(int i) {
+        return formatDate(i, System.currentTimeMillis());
+    }
+
+    private static String formatDate(int i, long when) {
         String f = DATE_FORMATS[Math.max(0, Math.min(DATE_FORMATS.length - 1, i))];
-        return new SimpleDateFormat(f, Locale.ENGLISH).format(new Date());
+        return new SimpleDateFormat(f, Locale.ENGLISH).format(new Date(when));
     }
 
     /** Today's date in the format last chosen in the Date panel (also used by stamps). */
@@ -1386,6 +1654,8 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
                 Marks.Stamp s = new Marks.Stamp();
                 s.kind = Marks.Stamp.TEXT;
                 s.text = formatDate(fi);
+                s.dfmt = fi;
+                s.when = System.currentTimeMillis();
                 s.color = color[0];
                 s.boxed = framed.isChecked();
                 placeText(s, 0.42f);
@@ -1780,6 +2050,7 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
                 } else {
                     Ui.toast(this, "Signature saved");
                 }
+                if ("sign".equals(curPanel)) signPanel();
             } else {
                 pendingSig = false;
             }

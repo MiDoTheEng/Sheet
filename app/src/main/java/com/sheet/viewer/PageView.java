@@ -40,6 +40,9 @@ final class PageView extends View {
         /** The user double-tapped a pipe, duct, fixture or piece of equipment. */
         void onEditSite(Marks.Item it);
 
+        /** The user tapped an item (to edit it), or empty page (it == null). */
+        void onTapItem(Marks.Item it);
+
         /** A point was added to or taken off the pipe/duct being drawn. */
         void onDraftChanged(int points);
 
@@ -95,7 +98,7 @@ final class PageView extends View {
     private final int touchSlop;
 
     private int gesture = G_NONE;
-    private float lastX, lastY, lastFx, lastFy, grabDx, grabAspect;
+    private float lastX, lastY, lastFx, lastFy, grabDx, grabDy, grabAspect;
     private boolean moved;
 
     private final Paint bmpPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
@@ -213,6 +216,7 @@ final class PageView extends View {
                     selRun = r;
                     invalidate();
                 }
+                if (host != null) host.onTapItem(hit != null ? hit : r);
                 return true;
             }
         });
@@ -734,6 +738,7 @@ final class PageView extends View {
             selected = hit;
             selRun = null;
             invalidate();
+            if (host != null) host.onTapItem(hit);
             return;
         }
         Marks.Stamp st = host != null ? host.makeSymbol() : null;
@@ -830,6 +835,7 @@ final class PageView extends View {
             if (Math.hypot(x - r.left, y - r.top) <= hitR) return G_DELETE;
             if (Math.hypot(x - r.right, y - r.bottom) <= hitR) {
                 grabDx = r.right - x;
+                grabDy = r.bottom - y;
                 grabAspect = selected.rect.width() / Math.max(0.001f, selected.rect.height());
                 return G_RESIZE;
             }
@@ -1040,6 +1046,7 @@ final class PageView extends View {
                 break;
             case G_MOVE:
                 if (a == MotionEvent.ACTION_MOVE && selected != null) {
+                    if (!moved && Math.hypot(x - downX, y - downY) < touchSlop) break;
                     RectF r = selected.rect;
                     float dx = (x - lastX) / scale, dy = (y - lastY) / scale;
                     if (r.width() < pageW) dx = Math.max(-r.left, Math.min(pageW - r.right, dx));
@@ -1049,8 +1056,9 @@ final class PageView extends View {
                     lastY = y;
                     moved = true;
                     invalidate();
-                } else if (a == MotionEvent.ACTION_UP && moved && host != null) {
-                    host.onMarksChanged();
+                } else if (a == MotionEvent.ACTION_UP && host != null) {
+                    if (moved) host.onMarksChanged();
+                    else if (selected != null) host.onTapItem(selected);
                 }
                 break;
             case G_RESIZE:
@@ -1059,7 +1067,12 @@ final class PageView extends View {
                     float minW = Ui.dp(getContext(), 28) / scale;
                     float w = Math.max(minW, (x + grabDx - offX) / scale - r.left);
                     r.right = r.left + w;
-                    r.bottom = r.top + w / grabAspect;
+                    if (selected.kind == Marks.Stamp.RECT || selected.kind == Marks.Stamp.OVAL) {
+                        // Shapes stretch freely: width and height follow the finger separately.
+                        r.bottom = r.top + Math.max(minW, (y + grabDy - offY) / scale - r.top);
+                    } else {
+                        r.bottom = r.top + w / grabAspect;
+                    }
                     moved = true;
                     invalidate();
                 } else if (a == MotionEvent.ACTION_UP && moved && host != null) {

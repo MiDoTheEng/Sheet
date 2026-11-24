@@ -210,6 +210,9 @@ final class Marks {
         int font;
         /** 0 none, 1 green check, 2 red check, 3 red cross. On TEXT it sits beside the text. */
         int tick;
+        /** For a date: which format (see the Date panel) and the day it shows; -1 if not a date. */
+        int dfmt = -1;
+        long when;
         /** Line thickness of a rectangle or oval, in page units; 0 means the old automatic size. */
         float lw;
 
@@ -469,6 +472,10 @@ final class Marks {
                     o.put("b", s.boxed);
                     o.put("f", s.font);
                     o.put("tk", s.tick);
+                    if (s.dfmt >= 0) {
+                        o.put("df", s.dfmt);
+                        o.put("wh", s.when);
+                    }
                     o.put("lw", s.lw);
                     o.put("l", s.rect.left);
                     o.put("tp", s.rect.top);
@@ -534,6 +541,8 @@ final class Marks {
                     s.boxed = o.optBoolean("b", true);
                     s.font = o.optInt("f", 0);
                     s.tick = o.optInt("tk", 0);
+                    s.dfmt = o.optInt("df", -1);
+                    s.when = o.optLong("wh", 0);
                     s.lw = (float) o.optDouble("lw", 0);
                     s.rect.set((float) o.getDouble("l"), (float) o.getDouble("tp"),
                             (float) o.getDouble("r"), (float) o.getDouble("bt"));
