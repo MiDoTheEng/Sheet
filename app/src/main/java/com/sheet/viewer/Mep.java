@@ -67,21 +67,25 @@ final class Mep {
     static final String[] SYM_NAMES = {"WC", "Wash basin", "Kitchen sink", "Shower",
             "Floor drain", "Water heater", "Split AC unit", "FCU / AHU", "Supply diffuser",
             "Return grille", "Exhaust fan", "Thermostat", "Valve", "Pump", "Electrical panel (DB)",
-            "Light"};
+            "Light", "Floor trap", "Urinal", "Bathtub", "Bidet", "Hose tap", "Clean out", "Manhole", "Gully trap", "Water meter", "Water tank", "Cassette unit (4-way)", "Ducted unit", "Wall-mounted unit", "Floor-standing unit", "VRF outdoor unit", "Refrigerant branch joint", "Linear slot diffuser", "Round diffuser", "Exhaust grille", "Fresh air louver", "Volume damper", "Fire damper", "Pendent sprinkler", "Upright sprinkler", "Sidewall sprinkler", "Fire hose reel", "Fire extinguisher", "Smoke detector", "Heat detector", "Manual call point", "Fire alarm bell / sounder", "Alarm check valve", "Fire department connection", "Socket outlet", "Light switch", "Emergency light", "Exit sign", "Isolator", "Data outlet", "CCTV camera", "Check valve", "Pressure gauge"};
     /** Short names: shown in the MEP bar and under each placed item. */
     static final String[] SYM_SHORT = {"WC", "Wash basin", "Kitchen sink", "Shower", "Floor drain",
             "Water heater", "Split AC", "FCU / AHU", "Diffuser", "Return grille", "Exhaust fan",
-            "Thermostat", "Valve", "Pump", "Panel (DB)", "Light"};
+            "Thermostat", "Valve", "Pump", "Panel (DB)", "Light", "Floor trap", "Urinal", "Bathtub", "Bidet", "Hose tap", "Clean out", "Manhole", "Gully trap", "Water meter", "Water tank", "Cassette", "Ducted unit", "Wall unit", "Floor unit", "VRF outdoor", "Branch joint", "Slot diffuser", "Round diffuser", "Exhaust grille", "Fresh air", "Vol. damper", "Fire damper", "Pendent spr.", "Upright spr.", "Sidewall spr.", "Hose reel", "Extinguisher", "Smoke det.", "Heat det.", "Call point", "Alarm bell", "Alarm valve", "FDC", "Socket", "Switch", "Emergency light", "Exit sign", "Isolator", "Data outlet", "CCTV", "Check valve", "Gauge"};
     /** Pipe names short enough for the MEP panel. */
     static final String[] PIPE_SHORT = {"Cold water", "Hot water", "Drainage", "Vent",
             "CHW supply", "CHW return", "CDP (AC drain)", "Fire fighting", "Gas", "Rain water",
             "Copper Split AC", "Copper VRF"};
-    /** 0 plumbing, 1 HVAC, 2 general, 3 electrical. */
-    static final int[] SYM_GROUP = {0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 3, 3};
-    static final int[] GROUP_COLOR = {0xFF1565C0, 0xFF00897B, 0xFF6D4C41, 0xFFEF6C00};
+    /** 0 plumbing, 1 HVAC, 2 general, 3 electrical / low current, 4 fire fighting. */
+    static final int[] SYM_GROUP = {0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 2, 2};
+    static final int[] GROUP_COLOR = {0xFF1565C0, 0xFF00897B, 0xFF6D4C41, 0xFFEF6C00, 0xFFC62828};
+    static final String[] GROUP_NAMES = {"Plumbing", "HVAC", "General", "Electrical & low current",
+            "Fire fighting"};
+    /** The order the sectors appear in the MEP panel. */
+    static final int[] PANEL_GROUPS = {0, 1, 4, 3, 2};
     /** Width / height of each symbol. */
     static final float[] SYM_ASPECT = {0.7f, 1.3f, 1.8f, 1f, 1f, 1f, 2.8f, 1.8f, 1f, 1.6f, 1f, 1f,
-            1.6f, 1f, 2f, 1f};
+            1.6f, 1f, 2f, 1f, 1.0f, 1.0f, 2.1f, 0.75f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.6f, 1.0f, 2.2f, 4.0f, 2.0f, 1.9f, 1.6f, 4.0f, 1.0f, 1.0f, 1.6f, 1.6f, 1.6f, 1.0f, 1.0f, 1.6f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.6f, 1.6f, 1.5f, 1.0f, 1.0f, 2.4f, 1.4f, 1.15f, 1.6f, 1.6f, 1.0f};
 
     static int symColor(int sym) {
         return GROUP_COLOR[SYM_GROUP[Math.max(0, Math.min(SYM_GROUP.length - 1, sym))]];
@@ -243,8 +247,7 @@ final class Mep {
                 c.drawRect(box, p);
                 break;
             }
-            case LIGHT:
-            default: {
+            case LIGHT: {
                 float rr = Math.min(w, h) / 2 - in, cx = L + w / 2, cy = T + h / 2;
                 c.drawCircle(cx, cy, rr, bg);
                 c.drawCircle(cx, cy, rr, p);
@@ -253,6 +256,375 @@ final class Mep {
                 c.drawLine(cx + k, cy - k, cx - k, cy + k, p);
                 break;
             }
+            default:
+                drawPlan(c, sym, r, color, p, f, bg, sw);
+                break;
+        }
+    }
+
+    /** Plan (top-view) symbols added later: 16 onward. */
+    private static void drawPlan(Canvas c, int sym, RectF r, int color, Paint p, Paint f, Paint bg, float sw) {
+        float w = r.width(), h = r.height(), L = r.left, T = r.top, in = sw / 2f;
+        float cx = L + w / 2, cy = T + h / 2, rr = Math.min(w, h) / 2 - in;
+        RectF box = new RectF(L + in, T + in, L + w - in, T + h - in);
+        switch (sym) {
+            case 16: { // floor trap: square body, round grating with bars, inlet stubs
+                c.drawRect(box, bg);
+                c.drawRect(box, p);
+                float gr = rr * 0.62f;
+                c.drawCircle(cx, cy, gr, p);
+                for (int i = -1; i <= 1; i++) {
+                    float y = cy + i * gr * 0.5f, half = (float) Math.sqrt(Math.max(0, gr * gr - (i * gr * 0.5f) * (i * gr * 0.5f)));
+                    c.drawLine(cx - half * 0.85f, y, cx + half * 0.85f, y, p);
+                }
+                break;
+            }
+            case 17: { // urinal: wall line with a D-shaped bowl
+                c.drawLine(L, T + in, L + w, T + in, p);
+                RectF bowl = new RectF(L + w * 0.12f, T - h * 0.35f, L + w * 0.88f, T + h - in);
+                c.drawArc(bowl, 0, 180, true, bg);
+                c.drawArc(bowl, 0, 180, false, p);
+                c.drawCircle(cx, T + h * 0.55f, sw * 0.9f, f);
+                break;
+            }
+            case 18: { // bathtub: outer rim, inner basin, drain at one end
+                c.drawRoundRect(box, sw * 2, sw * 2, bg);
+                c.drawRoundRect(box, sw * 2, sw * 2, p);
+                RectF basin = new RectF(L + w * 0.07f, T + h * 0.14f, L + w * 0.93f, T + h * 0.86f);
+                c.drawRoundRect(basin, h * 0.32f, h * 0.32f, p);
+                c.drawCircle(L + w * 0.82f, cy, sw * 1.1f, f);
+                break;
+            }
+            case 19: { // bidet: oval bowl with tap at the back
+                RectF bowl = new RectF(L + w * 0.1f, T + h * 0.12f, L + w * 0.9f, T + h - in);
+                c.drawOval(bowl, bg);
+                c.drawOval(bowl, p);
+                c.drawCircle(cx, T + h * 0.08f + in, sw * 1.3f, f);
+                c.drawCircle(cx, T + h * 0.6f, sw * 0.9f, f);
+                break;
+            }
+            case 20: { // hose tap: wall line, tap body and spout
+                c.drawLine(L, T + in, L + w, T + in, p);
+                c.drawLine(cx, T + in, cx, cy, p);
+                c.drawCircle(cx, cy + rr * 0.15f, rr * 0.45f, bg);
+                c.drawCircle(cx, cy + rr * 0.15f, rr * 0.45f, p);
+                c.drawLine(cx - rr * 0.6f, cy + rr * 0.15f, cx + rr * 0.6f, cy + rr * 0.15f, p);
+                break;
+            }
+            case 21: { // clean out: round cover with square plug
+                c.drawCircle(cx, cy, rr, bg);
+                c.drawCircle(cx, cy, rr, p);
+                float k = rr * 0.38f;
+                c.drawRect(cx - k, cy - k, cx + k, cy + k, f);
+                break;
+            }
+            case 22: { // manhole: square frame with cover and lifting keys
+                c.drawRect(box, bg);
+                c.drawRect(box, p);
+                RectF cov = new RectF(L + w * 0.16f, T + h * 0.16f, L + w * 0.84f, T + h * 0.84f);
+                c.drawRect(cov, p);
+                c.drawLine(cov.left, cov.top, cov.right, cov.bottom, p);
+                c.drawLine(cov.right, cov.top, cov.left, cov.bottom, p);
+                break;
+            }
+            case 23: { // gully trap: square grating with a grid
+                c.drawRect(box, bg);
+                c.drawRect(box, p);
+                for (int i = 1; i <= 3; i++) {
+                    float x = L + w * i / 4f, y = T + h * i / 4f;
+                    c.drawLine(x, T + h * 0.15f, x, T + h * 0.85f, p);
+                    c.drawLine(L + w * 0.15f, y, L + w * 0.85f, y, p);
+                }
+                break;
+            }
+            case 24: // water meter
+                c.drawCircle(cx, cy, rr, bg);
+                c.drawCircle(cx, cy, rr, p);
+                inner(c, "M", r, color, 0.55f);
+                break;
+            case 25: { // water tank: tank outline with access cover
+                c.drawRect(box, bg);
+                c.drawRect(box, p);
+                c.drawCircle(L + w * 0.8f, T + h * 0.3f, Math.min(w, h) * 0.13f, p);
+                inner(c, "TANK", new RectF(L, T + h * 0.35f, L + w * 0.75f, T + h), color, 0.4f);
+                break;
+            }
+            case 26: { // cassette: square panel, centre grille, four slots
+                c.drawRect(box, bg);
+                c.drawRect(box, p);
+                RectF g = new RectF(L + w * 0.32f, T + h * 0.32f, L + w * 0.68f, T + h * 0.68f);
+                c.drawRect(g, p);
+                float a = 0.14f, b = 0.24f;
+                c.drawRect(L + w * b, T + h * a, L + w * (1 - b), T + h * (a + 0.08f), p);
+                c.drawRect(L + w * b, T + h * (1 - a - 0.08f), L + w * (1 - b), T + h * (1 - a), p);
+                c.drawRect(L + w * a, T + h * b, L + w * (a + 0.08f), T + h * (1 - b), p);
+                c.drawRect(L + w * (1 - a - 0.08f), T + h * b, L + w * (1 - a), T + h * (1 - b), p);
+                break;
+            }
+            case 27: { // ducted unit: body with supply and return collars
+                RectF body = new RectF(L + w * 0.14f, T + in, L + w * 0.86f, T + h - in);
+                c.drawRect(body, bg);
+                c.drawRect(body, p);
+                c.drawRect(L + in, T + h * 0.25f, L + w * 0.14f, T + h * 0.75f, p);
+                c.drawRect(L + w * 0.86f, T + h * 0.25f, L + w - in, T + h * 0.75f, p);
+                inner(c, "DU", body, color, 0.45f);
+                break;
+            }
+            case 28: { // wall-mounted unit: long slim body with louver line
+                c.drawRoundRect(box, h * 0.3f, h * 0.3f, bg);
+                c.drawRoundRect(box, h * 0.3f, h * 0.3f, p);
+                c.drawLine(L + w * 0.05f, T + h * 0.68f, L + w * 0.95f, T + h * 0.68f, p);
+                break;
+            }
+            case 29: { // floor-standing unit: cabinet with top grille
+                c.drawRect(box, bg);
+                c.drawRect(box, p);
+                for (int i = 1; i <= 3; i++) {
+                    float x = L + w * (0.15f + 0.2f * i);
+                    c.drawLine(x, T + h * 0.18f, x, T + h * 0.82f, p);
+                }
+                break;
+            }
+            case 30: { // VRF outdoor unit: casing with two fans seen from above
+                c.drawRect(box, bg);
+                c.drawRect(box, p);
+                float fr = Math.min(w / 4.4f, h / 2.4f);
+                for (int i = 0; i < 2; i++) {
+                    float fx = L + w * (i == 0 ? 0.28f : 0.72f);
+                    c.drawCircle(fx, cy, fr, p);
+                    float k = fr * 0.7071f;
+                    c.drawLine(fx - k, cy - k, fx + k, cy + k, p);
+                    c.drawLine(fx + k, cy - k, fx - k, cy + k, p);
+                }
+                break;
+            }
+            case 31: { // refrigerant branch joint: one pipe in, two out
+                float jx = L + w * 0.45f;
+                c.drawLine(L + in, cy, jx, cy, p);
+                c.drawLine(jx, cy, L + w - in, T + h * 0.18f, p);
+                c.drawLine(jx, cy, L + w - in, T + h * 0.82f, p);
+                c.drawCircle(jx, cy, sw * 1.6f, f);
+                break;
+            }
+            case 32: { // linear slot diffuser
+                c.drawRect(box, bg);
+                c.drawRect(box, p);
+                c.drawLine(L + w * 0.06f, T + h * 0.38f, L + w * 0.94f, T + h * 0.38f, p);
+                c.drawLine(L + w * 0.06f, T + h * 0.62f, L + w * 0.94f, T + h * 0.62f, p);
+                break;
+            }
+            case 33: // round diffuser: rings
+                c.drawCircle(cx, cy, rr, bg);
+                c.drawCircle(cx, cy, rr, p);
+                c.drawCircle(cx, cy, rr * 0.66f, p);
+                c.drawCircle(cx, cy, rr * 0.33f, p);
+                break;
+            case 34: { // exhaust grille: square with diagonal blades
+                c.drawRect(box, bg);
+                c.drawRect(box, p);
+                c.save();
+                c.clipRect(box);
+                for (int i = -2; i <= 2; i++) {
+                    float o = i * w * 0.28f;
+                    c.drawLine(L + o, T + h, L + w + o, T, p);
+                }
+                c.restore();
+                break;
+            }
+            case 35: { // fresh air louver: frame with angled blades and an inward arrow
+                c.drawRect(box, bg);
+                c.drawRect(box, p);
+                for (int i = 1; i <= 4; i++) {
+                    float x = L + w * i / 5f;
+                    c.drawLine(x - w * 0.05f, T + h * 0.2f, x + w * 0.05f, T + h * 0.8f, p);
+                }
+                break;
+            }
+            case 36: { // volume damper: duct section with blade and spindle
+                c.drawRect(box, bg);
+                c.drawRect(box, p);
+                c.drawLine(L + w * 0.3f, T + h * 0.85f, L + w * 0.7f, T + h * 0.15f, p);
+                c.drawCircle(cx, cy, sw * 1.5f, f);
+                break;
+            }
+            case 37: { // fire damper: duct section with a cross and filled triangle
+                c.drawRect(box, bg);
+                c.drawRect(box, p);
+                c.drawLine(box.left, box.top, box.right, box.bottom, p);
+                c.drawLine(box.right, box.top, box.left, box.bottom, p);
+                inner(c, "FD", new RectF(L, T, L + w * 0.42f, T + h), color, 0.35f);
+                break;
+            }
+            case 38: // pendent sprinkler: ring with solid centre
+                c.drawCircle(cx, cy, rr, bg);
+                c.drawCircle(cx, cy, rr, p);
+                c.drawCircle(cx, cy, rr * 0.4f, f);
+                break;
+            case 39: { // upright sprinkler: ring, half filled
+                c.drawCircle(cx, cy, rr, bg);
+                c.drawArc(new RectF(cx - rr, cy - rr, cx + rr, cy + rr), 90, 180, true, f);
+                c.drawCircle(cx, cy, rr, p);
+                break;
+            }
+            case 40: { // sidewall sprinkler: wall line with half disc spraying out
+                c.drawLine(L, T + in, L + w, T + in, p);
+                RectF d = new RectF(cx - h * 0.85f, T + in - h * 0.85f, cx + h * 0.85f, T + in + h * 0.85f);
+                c.drawArc(d, 0, 180, true, bg);
+                c.drawArc(d, 0, 180, true, p);
+                c.drawCircle(cx, T + h * 0.35f, sw * 1.4f, f);
+                break;
+            }
+            case 41: { // fire hose reel: cabinet with reel
+                c.drawRect(box, bg);
+                c.drawRect(box, p);
+                c.drawCircle(cx, cy, rr * 0.62f, p);
+                c.drawCircle(cx, cy, rr * 0.3f, p);
+                c.drawCircle(cx, cy, sw, f);
+                break;
+            }
+            case 42: { // fire extinguisher: triangle marker
+                Path t = new Path();
+                t.moveTo(cx, T + in);
+                t.lineTo(L + w - in, T + h - in);
+                t.lineTo(L + in, T + h - in);
+                t.close();
+                c.drawPath(t, bg);
+                c.drawPath(t, p);
+                inner(c, "E", new RectF(L, T + h * 0.35f, L + w, T + h), color, 0.5f);
+                break;
+            }
+            case 43: // smoke detector
+                c.drawCircle(cx, cy, rr, bg);
+                c.drawCircle(cx, cy, rr, p);
+                inner(c, "S", r, color, 0.55f);
+                break;
+            case 44: // heat detector
+                c.drawCircle(cx, cy, rr, bg);
+                c.drawCircle(cx, cy, rr, p);
+                inner(c, "H", r, color, 0.55f);
+                break;
+            case 45: // manual call point: square with solid circle
+                c.drawRect(box, bg);
+                c.drawRect(box, p);
+                c.drawCircle(cx, cy, rr * 0.45f, f);
+                break;
+            case 46: { // alarm bell / sounder: dome on a base
+                c.drawCircle(cx, cy, rr, bg);
+                RectF dome = new RectF(cx - rr * 0.75f, cy - rr * 0.75f, cx + rr * 0.75f, cy + rr * 0.75f);
+                c.drawArc(dome, 180, 180, true, f);
+                c.drawLine(cx - rr * 0.9f, cy + sw, cx + rr * 0.9f, cy + sw, p);
+                c.drawCircle(cx, cy + rr * 0.35f, sw * 1.3f, f);
+                c.drawCircle(cx, cy, rr, p);
+                break;
+            }
+            case 47: { // alarm check valve: valve with clapper disc
+                Path v = new Path();
+                v.moveTo(box.left, box.top);
+                v.lineTo(cx, cy);
+                v.lineTo(box.left, box.bottom);
+                v.close();
+                v.moveTo(box.right, box.top);
+                v.lineTo(cx, cy);
+                v.lineTo(box.right, box.bottom);
+                v.close();
+                c.drawPath(v, bg);
+                c.drawPath(v, p);
+                c.drawCircle(cx, cy, Math.min(w, h) * 0.2f, f);
+                break;
+            }
+            case 48: { // fire department connection: twin inlets
+                c.drawRect(box, bg);
+                c.drawRect(box, p);
+                float ir = Math.min(w / 5f, h / 3f);
+                c.drawCircle(L + w * 0.3f, cy, ir, p);
+                c.drawCircle(L + w * 0.7f, cy, ir, p);
+                break;
+            }
+            case 49: { // socket outlet: plate with two pin slots
+                c.drawRoundRect(box, sw * 1.5f, sw * 1.5f, bg);
+                c.drawRoundRect(box, sw * 1.5f, sw * 1.5f, p);
+                c.drawLine(L + w * 0.36f, T + h * 0.3f, L + w * 0.36f, T + h * 0.7f, p);
+                c.drawLine(L + w * 0.64f, T + h * 0.3f, L + w * 0.64f, T + h * 0.7f, p);
+                break;
+            }
+            case 50: { // light switch: dot with lever
+                c.drawCircle(cx - rr * 0.3f, cy + rr * 0.3f, rr * 0.45f, bg);
+                c.drawCircle(cx - rr * 0.3f, cy + rr * 0.3f, rr * 0.45f, p);
+                c.drawLine(cx - rr * 0.0f, cy + rr * 0.0f, cx + rr * 0.85f, cy - rr * 0.85f, p);
+                c.drawLine(cx + rr * 0.85f, cy - rr * 0.85f, cx + rr * 0.85f + rr * 0.0f, cy - rr * 0.45f, p);
+                break;
+            }
+            case 51: { // emergency light: lamp cross with half filled
+                c.drawCircle(cx, cy, rr, bg);
+                c.drawArc(new RectF(cx - rr, cy - rr, cx + rr, cy + rr), 0, 180, true, f);
+                c.drawCircle(cx, cy, rr, p);
+                float k = rr * 0.7071f;
+                c.drawLine(cx - k, cy - k, cx + k, cy + k, p);
+                c.drawLine(cx + k, cy - k, cx - k, cy + k, p);
+                break;
+            }
+            case 52: // exit sign
+                c.drawRect(box, bg);
+                c.drawRect(box, p);
+                inner(c, "EXIT", r, color, 0.52f);
+                break;
+            case 53: { // isolator: box with switch blade
+                c.drawRect(box, bg);
+                c.drawRect(box, p);
+                c.drawLine(L + w * 0.2f, cy, L + w * 0.42f, cy, p);
+                c.drawLine(L + w * 0.42f, cy, L + w * 0.66f, T + h * 0.25f, p);
+                c.drawLine(L + w * 0.66f, cy, L + w * 0.8f, cy, p);
+                break;
+            }
+            case 54: { // data outlet: triangle
+                Path t = new Path();
+                t.moveTo(cx, T + in);
+                t.lineTo(L + w - in, T + h - in);
+                t.lineTo(L + in, T + h - in);
+                t.close();
+                c.drawPath(t, bg);
+                c.drawPath(t, f);
+                break;
+            }
+            case 55: { // CCTV camera: body with lens cone
+                RectF body = new RectF(L + in, T + h * 0.25f, L + w * 0.62f, T + h * 0.75f);
+                c.drawRect(body, bg);
+                c.drawRect(body, p);
+                Path t = new Path();
+                t.moveTo(L + w * 0.62f, cy);
+                t.lineTo(L + w - in, T + h * 0.15f);
+                t.lineTo(L + w - in, T + h * 0.85f);
+                t.close();
+                c.drawPath(t, p);
+                break;
+            }
+            case 56: { // check valve: valve with one side filled (flow direction)
+                Path a = new Path();
+                a.moveTo(box.left, box.top);
+                a.lineTo(cx, cy);
+                a.lineTo(box.left, box.bottom);
+                a.close();
+                Path b = new Path();
+                b.moveTo(box.right, box.top);
+                b.lineTo(cx, cy);
+                b.lineTo(box.right, box.bottom);
+                b.close();
+                c.drawPath(a, f);
+                c.drawPath(b, bg);
+                c.drawPath(a, p);
+                c.drawPath(b, p);
+                break;
+            }
+            case 57: { // pressure gauge: dial with needle
+                c.drawCircle(cx, cy, rr, bg);
+                c.drawCircle(cx, cy, rr, p);
+                c.drawLine(cx, cy, cx + rr * 0.55f, cy - rr * 0.55f, p);
+                c.drawCircle(cx, cy, sw * 1.2f, f);
+                break;
+            }
+            default:
+                c.drawCircle(cx, cy, rr, bg);
+                c.drawCircle(cx, cy, rr, p);
         }
     }
 

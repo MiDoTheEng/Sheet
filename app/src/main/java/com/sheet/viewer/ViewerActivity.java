@@ -629,7 +629,20 @@ public final class ViewerActivity extends Activity implements Renderer.Host, Pag
         String[] ducts = new String[Mep.DUCT_NAMES.length];
         for (int i = 0; i < ducts.length; i++) ducts[i] = Mep.DUCT_NAMES[i];
         group(body, "Ducts", 1, ducts, null);
-        group(body, "Fixtures & equipment", 2, Mep.SYM_SHORT, null);
+        // Fixtures and equipment, one section per trade.
+        for (int g : Mep.PANEL_GROUPS) {
+            int n = 0;
+            for (int gi : Mep.SYM_GROUP) if (gi == g) n++;
+            String[] nm = new String[n];
+            int[] ix = new int[n];
+            int k = 0;
+            for (int i = 0; i < Mep.SYM_GROUP.length; i++) {
+                if (Mep.SYM_GROUP[i] != g) continue;
+                nm[k] = Mep.SYM_SHORT[i];
+                ix[k++] = i;
+            }
+            group(body, Mep.GROUP_NAMES[g], 2, nm, ix);
+        }
         palBody = new android.widget.ScrollView(this);
         palBody.setVerticalScrollBarEnabled(false);
         palBody.addView(body);
